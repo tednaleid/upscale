@@ -93,7 +93,6 @@ def run_flux(flux_bin, model_dir, input_images, output_path, width, height, extr
 def main():
     script_dir = Path(__file__).resolve().parent
     flux_bin = script_dir / "flux2.c" / "flux"
-    model_dir = script_dir / "flux-klein-model"
 
     parser = argparse.ArgumentParser(
         description="Upscale an image using Flux.2 Klein 4B super-resolution.",
@@ -122,6 +121,10 @@ Examples:
 
     parser.add_argument("input", type=Path, help="Path to input image")
     parser.add_argument("output", type=Path, help="Path for output image (always .png)")
+    parser.add_argument(
+        "--base", action="store_true",
+        help="Use base model (higher quality, ~25x slower). Uses flux-klein-base-model.",
+    )
     parser.add_argument(
         "-i",
         dest="ref_images",
@@ -164,11 +167,27 @@ Examples:
     )
     flux_group.add_argument(
         "-s", "--steps", type=int, default=None,
-        help="Sampling steps (default: 4, more = better quality)",
+        help="Sampling steps (default: auto, 4 distilled / 50 base)",
+    )
+    flux_group.add_argument(
+        "-g", "--guidance", type=float, default=None,
+        help="CFG guidance scale (default: auto, 1.0 distilled / 4.0 base)",
     )
     flux_group.add_argument(
         "-S", "--seed", type=int, default=None,
         help="Random seed for reproducibility",
+    )
+    flux_group.add_argument(
+        "--linear", action="store_true",
+        help="Use linear timestep schedule (faster preview with fewer steps)",
+    )
+    flux_group.add_argument(
+        "--power", action="store_true",
+        help="Use power curve timestep schedule",
+    )
+    flux_group.add_argument(
+        "--power-alpha", type=float, default=None,
+        help="Power schedule exponent (default: 2.0)",
     )
     flux_group.add_argument(
         "-v", "--verbose", action="store_true",
@@ -189,12 +208,26 @@ Examples:
 
     args, extra_args = parser.parse_known_args()
 
+    # Select model directory based on --base flag
+    if args.base:
+        model_dir = script_dir / "flux-klein-base-model"
+    else:
+        model_dir = script_dir / "flux-klein-model"
+
     # Rebuild known flux flags into the passthrough list
     flux_passthrough = ["-p", args.prompt]
     if args.steps is not None:
         flux_passthrough.extend(["-s", str(args.steps)])
+    if args.guidance is not None:
+        flux_passthrough.extend(["-g", str(args.guidance)])
     if args.seed is not None:
         flux_passthrough.extend(["-S", str(args.seed)])
+    if args.linear:
+        flux_passthrough.append("--linear")
+    if args.power:
+        flux_passthrough.append("--power")
+    if args.power_alpha is not None:
+        flux_passthrough.extend(["--power-alpha", str(args.power_alpha)])
     if args.verbose:
         flux_passthrough.append("-v")
     if args.quiet:
@@ -236,8 +269,9 @@ Examples:
         sys.exit(1)
 
     if not model_dir.exists():
-        print(f"Error: Model not found at {model_dir}", file=sys.stderr)
-        print("Run ./setup.sh first to download the model", file=sys.stderr)
+        model_name = "base model" if args.base else "model"
+        print(f"Error: {model_name.capitalize()} not found at {model_dir}", file=sys.stderr)
+        print("Run ./setup.sh first to download the models", file=sys.stderr)
         sys.exit(1)
 
     # --- Dimension calculation (iteration 1 only) ---

@@ -1,12 +1,13 @@
 #!/bin/bash
-# ABOUTME: Setup script for flux2.c - clones repo, builds binary, and downloads model
-# ABOUTME: Run once to set up the upscaling environment
+# ABOUTME: Setup script for flux2.c - clones repo, builds binary, and downloads models
+# ABOUTME: Run once to set up the upscaling environment (distilled + base models)
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLUX_DIR="$SCRIPT_DIR/flux2.c"
 MODEL_DIR="$SCRIPT_DIR/flux-klein-model"
+BASE_MODEL_DIR="$SCRIPT_DIR/flux-klein-base-model"
 
 echo "=== flux2.c Super Resolution Setup ==="
 echo ""
@@ -81,14 +82,45 @@ else
     fi
 fi
 
+# Download base model if not present
+if [ -d "$BASE_MODEL_DIR" ] && [ "$(ls -A "$BASE_MODEL_DIR" 2>/dev/null)" ]; then
+    echo ""
+    echo "Base model directory already exists at: $BASE_MODEL_DIR"
+    echo "Skipping download. Delete the directory and re-run to re-download."
+else
+    echo ""
+    echo "Downloading base model (~16GB)..."
+    echo "This will take a while depending on your connection speed."
+    echo ""
+
+    cd "$FLUX_DIR"
+
+    if python3 -c "import huggingface_hub" 2>/dev/null; then
+        echo "Using Python downloader..."
+        python3 download_model.py --base
+    elif command -v curl &>/dev/null; then
+        echo "Using shell downloader..."
+        ./download_model.sh --base
+    else
+        echo "ERROR: Need either 'huggingface_hub' Python package or 'curl' to download model"
+        echo "Install with: pip install huggingface_hub"
+        echo "Or install curl"
+        exit 1
+    fi
+
+    # Move base model to our directory
+    if [ -d "$FLUX_DIR/flux-klein-base-model" ]; then
+        mv "$FLUX_DIR/flux-klein-base-model" "$BASE_MODEL_DIR"
+    fi
+fi
+
 echo ""
 echo "=== Setup Complete ==="
 echo ""
-echo "Model location: $MODEL_DIR"
+echo "Distilled model: $MODEL_DIR"
+echo "Base model:      $BASE_MODEL_DIR"
 echo "Binary location: $FLUX_DIR/flux"
 echo ""
 echo "Test with:"
-echo "  ./upscale.sh input.png output.png"
-echo ""
-echo "Or directly:"
-echo "  $FLUX_DIR/flux -d $MODEL_DIR -i input.png -W 1024 -H 1024 -o output.png -p 'Create an exact copy of the input image.'"
+echo "  ./upscale.py input.png output.png          # distilled (fast, ~5s)"
+echo "  ./upscale.py input.png output.png --base    # base (higher quality, slower)"

@@ -11,7 +11,7 @@ The key insight is using a prompt like "Create an exact copy of the input image"
 ## Requirements
 
 - **macOS** (Apple Silicon recommended) or **Linux**
-- ~16GB disk space for the model
+- ~32GB disk space for both models (~16GB each)
 - ~4-5GB RAM minimum (with memory mapping)
 - For Linux with BLAS: `sudo apt install libopenblas-dev`
 
@@ -26,7 +26,7 @@ Run the setup script once to clone flux2.c, build it, and download the model:
 This will:
 1. Clone [antirez/flux2.c](https://github.com/antirez/flux2.c)
 2. Build with the optimal backend for your platform (MPS for Apple Silicon, BLAS for others)
-3. Download the Flux.2 Klein 4B model (~16GB)
+3. Download the distilled model (~16GB) and base model (~16GB)
 
 ## Usage
 
@@ -49,6 +49,21 @@ This will:
 ./upscale.py input.png output.png -p "A sharp, detailed photograph"
 ```
 
+### Base Model
+
+The base (undistilled) model produces higher quality results at the cost of speed (~25x slower). Flux auto-detects steps (50) and guidance (4.0) from the model.
+
+```bash
+# Base model - higher quality, slower
+./upscale.py input.png output.png --base
+
+# Base with linear schedule and fewer steps for a quick preview
+./upscale.py input.png output.png --base --linear -s 10
+
+# Base with custom guidance
+./upscale.py input.png output.png --base -g 6.0
+```
+
 ### Options
 
 ```
@@ -57,6 +72,7 @@ Positional:
   output                Path for output image (always .png)
 
 Upscale options:
+  --base                Use base model (higher quality, ~25x slower)
   -W, --width N         Output width (default: flux auto-detect from input)
   -H, --height N        Output height (default: flux auto-detect from input)
   --scale N             Scale percentage (e.g. 200 = 2x). Mutually exclusive with -W/-H.
@@ -66,8 +82,12 @@ Upscale options:
 
 Common flux options (passed through to flux):
   -p, --prompt TEXT     Text prompt (default: "Create an exact copy of the input image.")
-  -s, --steps N         Sampling steps (default: 4, more = better quality)
+  -s, --steps N         Sampling steps (default: auto, 4 distilled / 50 base)
+  -g, --guidance N      CFG guidance scale (default: auto, 1.0 distilled / 4.0 base)
   -S, --seed N          Random seed for reproducibility
+  --linear              Use linear timestep schedule (faster preview with fewer steps)
+  --power               Use power curve timestep schedule
+  --power-alpha N       Power schedule exponent (default: 2.0)
   -v, --verbose         Show detailed output
   -q, --quiet           Silent mode
   --show                Display image in terminal (Kitty/Ghostty/iTerm2)
@@ -175,7 +195,8 @@ For more control, use the flux binary directly:
 ## Tips
 
 - **Prompt matters**: While "Create an exact copy" works well, describing the desired output ("A high resolution photograph with sharp details") can sometimes produce better results.
-- **More steps = better quality**: Default is 4 steps (fast). Try 8-12 for higher quality at the cost of speed.
+- **More steps = better quality**: Distilled default is 4 steps (fast). Try 8-12 for higher quality at the cost of speed.
+- **Base model**: Use `--base` for the highest quality. Combine with `--linear -s 10` for a faster preview.
 - **Aspect ratio**: When using `-W` or `-H` alone, the other dimension is inferred from the input aspect ratio and aligned to 16px boundaries.
 - **Evolution**: Multiple iterations can progressively refine details. Start with 2-3 and increase if needed.
 - **Memory**: Uses memory-mapped weights by default, keeping RAM usage low.
