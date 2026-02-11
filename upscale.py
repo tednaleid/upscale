@@ -61,6 +61,43 @@ def get_dimensions(args, input_path, max_area):
     return in_w, in_h, width, height
 
 
+def resolve_output_path(output_str, input_path):
+    """Resolve the output path from the optional output argument.
+
+    Rules:
+    - None (omitted): auto-number using input stem in current directory
+    - Ends with '/': treat as directory (created if needed), auto-number using input stem
+    - Ends with '.png': use as-is, overwrite on subsequent runs
+    - Otherwise: treat as base name, auto-number with that name
+
+    Returns (resolved_path, auto_numbered).
+    """
+    if output_str is None:
+        directory = Path(".")
+        base_name = input_path.stem
+    elif output_str.endswith("/"):
+        directory = Path(output_str)
+        base_name = input_path.stem
+    elif output_str.endswith(".png"):
+        return Path(output_str), False
+    else:
+        p = Path(output_str)
+        directory = p.parent
+        base_name = p.name
+
+    # Auto-create directory if needed
+    directory.mkdir(parents=True, exist_ok=True)
+
+    # Find next free number (check both plain and evolution-numbered variants)
+    for n in range(100000):
+        candidate = directory / f"{base_name}-{n:05d}.png"
+        if not candidate.exists() and not list(directory.glob(f"{base_name}-{n:05d}_*.png")):
+            return candidate, True
+
+    print(f"Error: could not find a free filename for {base_name}-* in {directory}", file=sys.stderr)
+    sys.exit(1)
+
+
 def make_output_path(base_output, iteration, total):
     """Return the output path for this iteration.
 
@@ -99,28 +136,34 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Auto-detect dimensions, default prompt copies input
+  # Auto-number output: creates input-00000.png (or next free number)
+  %(prog)s input.png
+
+  # Output to directory (created if needed): results/input-00000.png
+  %(prog)s input.png results/
+
+  # Custom base name: upscaled-00000.png
+  %(prog)s input.png upscaled
+
+  # Explicit .png: always overwrites
   %(prog)s input.png output.png
 
   # Scale to 200%% (2x), dimensions aligned to 16px
-  %(prog)s input.png output.png --scale 200
-
-  # Explicit width, height inferred from aspect ratio
-  %(prog)s input.png output.png -W 1024
-
-  # Custom prompt for guided upscaling
-  %(prog)s input.png output.png -p "A sharp, detailed photograph"
+  %(prog)s input.png --scale 200
 
   # Evolve 3 iterations with a persistent reference image
-  %(prog)s input.png output.png -i ref.png --evolve 3 -p "blend with reference"
+  %(prog)s input.png -i ref.png --evolve 3 -p "blend with reference"
 
   # Show in terminal, verbose, 8 steps
-  %(prog)s input.png output.png --show -v -s 8
+  %(prog)s input.png --show -v -s 8
 """,
     )
 
     parser.add_argument("input", type=Path, help="Path to input image")
-    parser.add_argument("output", type=Path, help="Path for output image (always .png)")
+    parser.add_argument(
+        "output", nargs="?", default=None,
+        help="Output path (.png = overwrite, no ext = auto-number, trailing / = directory)",
+    )
     parser.add_argument(
         "--base", action="store_true",
         help="Use base model (higher quality, ~25x slower). Uses flux-klein-base-model.",
@@ -258,10 +301,15 @@ Examples:
             print(f"Error: Reference image not found: {ref}", file=sys.stderr)
             sys.exit(1)
 
-    output_dir = args.output.parent
-    if str(output_dir) != "." and not output_dir.exists():
-        print(f"Error: Output directory not found: {output_dir}", file=sys.stderr)
-        sys.exit(1)
+    # Resolve output path (auto-number, directory creation, etc.)
+    output_path, auto_numbered = resolve_output_path(args.output, args.input)
+
+    # For explicit .png paths, validate parent directory exists
+    if not auto_numbered:
+        output_dir = output_path.parent
+        if str(output_dir) != "." and not output_dir.exists():
+            print(f"Error: Output directory not found: {output_dir}", file=sys.stderr)
+            sys.exit(1)
 
     if not flux_bin.exists():
         print(f"Error: flux binary not found at {flux_bin}", file=sys.stderr)
@@ -285,7 +333,7 @@ Examples:
 
     try:
         for i in range(1, total + 1):
-            out_path = make_output_path(args.output, i, total)
+            out_path = make_output_path(output_path, i, total)
             input_images = [evolving_input] + args.ref_images
 
             # Only pass dimensions on first iteration; subsequent ones let flux auto-detect

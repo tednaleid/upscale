@@ -33,21 +33,31 @@ This will:
 ### Basic Upscaling
 
 ```bash
-# Auto-detect dimensions, default prompt copies input
-./upscale.py input.png output.png
+# Auto-number output: creates input-00000.png (or next free number)
+./upscale.py input.png
 
 # Scale to 200% (2x), dimensions aligned to 16px boundaries
-./upscale.py input.png output.png --scale 200
+./upscale.py input.png --scale 200
 
 # Explicit width, height inferred from input aspect ratio
-./upscale.py input.png output.png -W 1024
+./upscale.py input.png -W 1024
 
-# Explicit width and height
-./upscale.py input.png output.png -W 1024 -H 768
-
-# Custom prompt for guided upscaling
-./upscale.py input.png output.png -p "A sharp, detailed photograph"
+# Explicit .png path: always overwrites on subsequent runs
+./upscale.py input.png output.png
 ```
+
+### Output Naming
+
+The output argument is optional and controls naming behavior:
+
+| Command | Output file |
+|---------|------------|
+| `./upscale.py input.png` | `input-00000.png` (auto-increments) |
+| `./upscale.py input.png results/` | `results/input-00000.png` (dir created if needed) |
+| `./upscale.py input.png upscaled` | `upscaled-00000.png` (auto-increments) |
+| `./upscale.py input.png output.png` | `output.png` (overwrites) |
+
+Auto-numbered outputs never overwrite — the number increments to find the next free filename. Only explicit `.png` paths overwrite.
 
 ### Base Model
 
@@ -55,13 +65,13 @@ The base (undistilled) model produces higher quality results at the cost of spee
 
 ```bash
 # Base model - higher quality, slower
-./upscale.py input.png output.png --base
+./upscale.py input.png --base
 
 # Base with linear schedule and fewer steps for a quick preview
-./upscale.py input.png output.png --base --linear -s 10
+./upscale.py input.png --base --linear -s 10
 
 # Base with custom guidance
-./upscale.py input.png output.png --base -g 6.0
+./upscale.py input.png --base -g 6.0
 ```
 
 ### Options
@@ -69,7 +79,7 @@ The base (undistilled) model produces higher quality results at the cost of spee
 ```
 Positional:
   input                 Path to input image
-  output                Path for output image (always .png)
+  output                Output path (optional, .png = overwrite, no ext = auto-number, / = directory)
 
 Upscale options:
   --base                Use base model (higher quality, ~25x slower)
@@ -112,8 +122,8 @@ A warning is printed to stderr if the output area exceeds `--max-area` (default 
 Use `--evolve N` to iteratively refine an image by feeding each output back as the next input:
 
 ```bash
-# 3 evolution iterations — produces output_001.png, output_002.png, output_003.png
-./upscale.py input.png output.png --evolve 3
+# 3 evolution iterations — produces input-00000_001.png, input-00000_002.png, input-00000_003.png
+./upscale.py input.png --evolve 3
 ```
 
 Each iteration feeds the previous output as the primary input to flux. Dimensions are only set on the first iteration; subsequent iterations let flux auto-detect from the previous output.
@@ -124,14 +134,14 @@ Use `-i` to pass additional reference images that persist across all evolution i
 
 ```bash
 # Blend with a style reference across 3 iterations
-./upscale.py input.png output.png -i style.png --evolve 3 -p "blend with reference style"
+./upscale.py input.png -i style.png --evolve 3 -p "blend with reference style"
 ```
 
 This runs:
 ```
-Iteration 1: flux -i input.png      -i style.png -o output_001.png -p "..."
-Iteration 2: flux -i output_001.png -i style.png -o output_002.png -p "..."
-Iteration 3: flux -i output_002.png -i style.png -o output_003.png -p "..."
+Iteration 1: flux -i input.png              -i style.png -o input-00000_001.png -p "..."
+Iteration 2: flux -i input-00000_001.png    -i style.png -o input-00000_002.png -p "..."
+Iteration 3: flux -i input-00000_002.png    -i style.png -o input-00000_003.png -p "..."
 ```
 
 Multiple `-i` flags can be used to pass several reference images.
@@ -142,26 +152,26 @@ Any flags not recognized by the wrapper are passed directly to flux:
 
 ```bash
 # Show result in terminal, verbose output, 8 sampling steps
-./upscale.py input.png output.png --show -v -s 8
+./upscale.py input.png --show -v -s 8
 
 # Reproducible with a seed
-./upscale.py input.png output.png -S 42
+./upscale.py input.png -S 42
 ```
 
 ### Examples
 
 ```bash
-# Simple upscale, let flux pick dimensions
-./upscale.py small.png big.png
+# Simple upscale, auto-named output
+./upscale.py small.png
 
-# 4x upscale with higher quality
-./upscale.py thumb.png large.png --scale 400 -s 8
+# 4x upscale with higher quality, custom base name
+./upscale.py thumb.png large --scale 400 -s 8
 
-# Width-only, aspect ratio preserved, custom prompt
+# Width-only, aspect ratio preserved, explicit overwrite path
 ./upscale.py photo.png wide.png -W 2048 -p "high resolution landscape"
 
-# Evolve with style reference, show each result in terminal
-./upscale.py sketch.png final.png -i style.png --evolve 5 --show -p "oil painting style"
+# Evolve with style reference, output to directory
+./upscale.py sketch.png results/ -i style.png --evolve 5 --show -p "oil painting style"
 ```
 
 ## Direct flux2.c Usage
