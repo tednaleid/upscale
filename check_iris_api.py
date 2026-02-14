@@ -26,6 +26,7 @@ IRIS_H_FUNCTIONS = [
     "iris_img2img",
     "iris_multiref",
     "iris_get_error",
+    "iris_set_step_image_callback",
 ]
 
 IRIS_H_BLOCKS = [
@@ -48,6 +49,18 @@ KERNELS_H_LINES = [
     "extern iris_substep_callback_t iris_substep_callback;",
     "extern iris_step_callback_t iris_step_callback;",
     "extern iris_phase_callback_t iris_phase_callback;",
+]
+
+# --- terminals.h: terminal graphics display ---
+
+TERMINALS_H_BLOCKS = [
+    "} term_graphics_proto;",       # protocol enum
+]
+
+TERMINALS_H_FUNCTIONS = [
+    "detect_terminal_graphics",
+    "terminal_display_image",
+    "terminal_display_png",
 ]
 
 
@@ -142,6 +155,23 @@ def extract_api():
             if marker in line:
                 sections.append(line)
                 break
+
+    # --- terminals.h ---
+    terminals_h = IRIS_DIR / "terminals.h"
+    if not terminals_h.exists():
+        return None, f"terminals.h not found at {terminals_h}"
+
+    t_lines = terminals_h.read_text().split("\n")
+
+    for ending in TERMINALS_H_BLOCKS:
+        block = extract_typedef_line(t_lines, ending)
+        if block:
+            sections.append(block)
+
+    for func in TERMINALS_H_FUNCTIONS:
+        decl = extract_function(t_lines, func)
+        if decl:
+            sections.append(decl)
 
     return "\n\n".join(sections) + "\n", None
 

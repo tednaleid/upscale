@@ -243,6 +243,14 @@ Examples:
         "--power-alpha", type=float, default=None,
         help="Power schedule exponent (default: 2.0)",
     )
+    iris_group.add_argument(
+        "--show", action="store_true",
+        help="Display final image in terminal (Kitty/Ghostty/iTerm2/WezTerm)",
+    )
+    iris_group.add_argument(
+        "--show-steps", action="store_true",
+        help="Display each denoising step in terminal (slower)",
+    )
     args = parser.parse_args()
 
     # Select model directory based on --9b and --base flags
@@ -313,6 +321,11 @@ Examples:
         ctx = IrisContext(model_dir)
         print(f"Model loaded ({time.monotonic() - t0:.1f}s)")
 
+        if args.show_steps:
+            ctx.enable_show_steps()
+
+        show = args.show or args.show_steps
+
         for seed_idx in range(count):
             # Determine seed for this count iteration
             if seed_idx == 0 and base_seed is not None:
@@ -359,6 +372,9 @@ Examples:
                 ctx.multiref(args.prompt, input_images, out_path, params)
                 gen_elapsed = time.monotonic() - gen_t0
                 print(f"Saved {out_path} ({gen_elapsed:.1f}s)")
+
+                if show:
+                    ctx.display_png(out_path)
 
                 evolving_input = out_path
 

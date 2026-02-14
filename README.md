@@ -131,6 +131,8 @@ Generation options:
   --linear              Use linear timestep schedule (faster preview with fewer steps)
   --power               Use power curve timestep schedule
   --power-alpha N       Power schedule exponent (default: 2.0)
+  --show                Display final image in terminal (Kitty/Ghostty/iTerm2/WezTerm)
+  --show-steps          Display each denoising step in terminal (slower)
 ```
 
 ### Dimension Handling
