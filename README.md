@@ -53,7 +53,7 @@ The 9B models require a [HuggingFace token](https://huggingface.co/settings/toke
 
 ## Usage
 
-All input images are provided with `-i`. The first `-i` is the primary image (used for upscaling, evolves across iterations). Additional `-i` flags add persistent reference images. Output is a positional argument or `-o`.
+All input images are provided with `-i`. The first `-i` is the primary image (used for upscaling, evolves across iterations). Additional `-i` flags add persistent reference images. Output is specified with `-o`.
 
 ### Upscaling
 
@@ -68,7 +68,7 @@ All input images are provided with `-i`. The first `-i` is the primary image (us
 ./upscale.py -i input.png -W 1024
 
 # Explicit .png path: always overwrites on subsequent runs
-./upscale.py -i input.png output.png
+./upscale.py -i input.png -o output.png
 ```
 
 ### Text-to-Image
@@ -94,9 +94,9 @@ The output argument is optional and controls naming behavior:
 | Command | Output file |
 |---------|------------|
 | `./upscale.py -i input.png` | `input-00000.png` (auto-increments) |
-| `./upscale.py -i input.png results/` | `results/input-00000.png` (dir created if needed) |
-| `./upscale.py -i input.png upscaled` | `upscaled-00000.png` (auto-increments) |
-| `./upscale.py -i input.png output.png` | `output.png` (overwrites) |
+| `./upscale.py -i input.png -o results/` | `results/input-00000.png` (dir created if needed) |
+| `./upscale.py -i input.png -o upscaled` | `upscaled-00000.png` (auto-increments) |
+| `./upscale.py -i input.png -o output.png` | `output.png` (overwrites) |
 
 Auto-numbered outputs never overwrite — the number increments to find the next free filename. Only explicit `.png` paths overwrite.
 
@@ -130,12 +130,9 @@ The 9B model is larger and may produce better results. Combine with `--base` for
 ### Options
 
 ```
-Positional:
-  output                Output path (optional, .png = overwrite, no ext = auto-number, / = directory)
-
 Input/output:
   -i PATH               Input image (repeatable). First is primary (evolves), rest are persistent refs.
-  -o PATH               Output path (alternative to positional)
+  -o PATH               Output path (.png = overwrite, no ext = auto-number, / = directory)
   --base                Use base model (higher quality, ~25x slower)
   --9b                  Use 9B model (larger, non-commercial)
   -W, --width N         Output width (default: iris auto-detect from input)
@@ -203,13 +200,13 @@ Each seed iteration gets its own auto-numbered output base (e.g. `input-00000.pn
 ./upscale.py -i small.png
 
 # 4x upscale, custom base name
-./upscale.py -i thumb.png large --scale 400 -s 8
+./upscale.py -i thumb.png -o large --scale 400 -s 8
 
 # Width-only, aspect ratio preserved, explicit overwrite path
 ./upscale.py -i photo.png -o wide.png -W 2048 -p "high resolution landscape"
 
 # Evolve with style reference, output to directory
-./upscale.py -i sketch.png -i style.png results/ --evolve 5 --show -p "oil painting style"
+./upscale.py -i sketch.png -i style.png -o results/ --evolve 5 --show -p "oil painting style"
 
 # Text-to-image
 ./upscale.py -p "mountain landscape at sunset" -W 512 -H 512

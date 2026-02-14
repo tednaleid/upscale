@@ -152,13 +152,13 @@ Examples:
   %(prog)s -i input.png
 
   # Output to directory (created if needed): results/input-00000.png
-  %(prog)s -i input.png results/
+  %(prog)s -i input.png -o results/
 
   # Custom base name: upscaled-00000.png
-  %(prog)s -i input.png upscaled
+  %(prog)s -i input.png -o upscaled
 
   # Explicit .png: always overwrites
-  %(prog)s -i input.png output.png
+  %(prog)s -i input.png -o output.png
 
   # Scale to 200%% (2x), dimensions aligned to 16px
   %(prog)s -i input.png --scale 200
@@ -178,12 +178,8 @@ Examples:
     )
 
     parser.add_argument(
-        "output", nargs="?", default=None,
+        "-o", dest="output", default=None,
         help="Output path (.png = overwrite, no ext = auto-number, trailing / = directory)",
-    )
-    parser.add_argument(
-        "-o", dest="output_flag", default=None,
-        help="Output path (alternative to positional)",
     )
     parser.add_argument(
         "--base", action="store_true",
@@ -281,12 +277,6 @@ Examples:
         model_dir = script_dir / f"flux-klein-{size}-base"
     else:
         model_dir = script_dir / f"flux-klein-{size}"
-
-    # Merge -o flag with positional output
-    if args.output_flag:
-        if args.output is not None:
-            parser.error("Cannot use both positional output and -o")
-        args.output = args.output_flag
 
     # --- Validation ---
 
