@@ -1,5 +1,5 @@
 flux*
-iris*
+iris.c/
 .claude
 *.png
 __pycache__

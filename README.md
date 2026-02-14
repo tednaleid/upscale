@@ -1,6 +1,10 @@
 # Flux.2 Klein Super Resolution Upscaler
 
-Use the Flux.2 Klein 4B model as a super-resolution upscaler, based on [antirez's technique](https://bsky.app/profile/antirez.bsky.social/post/3mdyj7tbmoc2c).
+A Python wrapper around [antirez/iris.c](https://github.com/antirez/iris.c) for Flux.2 Klein super-resolution upscaling, based on [antirez's technique](https://bsky.app/profile/antirez.bsky.social/post/3mdyj7tbmoc2c). Adds:
+
+- **Multi-seed batch generation** (`--count`) — encodes text and images once, reuses across seeds
+- **Dimension helpers** — `--scale` percentage, single-dimension with aspect ratio inference, 16px alignment
+- **Auto-numbered output** — never overwrites, finds next free filename
 
 ## How It Works
 
@@ -41,7 +45,7 @@ just uninstall            # removes the symlink
 ```
 
 This will:
-1. Clone [antirez/iris.c](https://github.com/antirez/iris.c)
+1. Clone [tednaleid/iris.c](https://github.com/tednaleid/iris.c) (fork with patches, see IRIS_PATCHES.md)
 2. Build with the optimal backend for your platform (MPS for Apple Silicon, BLAS for others)
 3. Download the selected models
 

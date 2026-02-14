@@ -61,6 +61,7 @@ iris-check:
     }
 
 # Link shared library for Python ctypes usage (assumes iris-build already ran)
+# NOTE: Apple Silicon/MPS specific — hardcodes .mps.o suffixes and Metal frameworks
 iris-dylib:
     #!/usr/bin/env bash
     set -eu
@@ -112,6 +113,57 @@ uninstall:
     else
         echo "No symlink found at {{ bin_link }}"
     fi
+
+# Smoke test: exercises all generation code paths and CLI switches
+test:
+    #!/usr/bin/env bash
+    set -eu
+    d="output/test-$(date +%Y%m%d-%H%M%S)"
+    mkdir -p "$d"
+    echo "Test output: $d"
+
+    run() { echo ""; echo "=== $1 ==="; shift; "$@"; }
+
+    # Single-ref, auto-detect dimensions, auto-numbered output
+    run "basic upscale" ./upscale.py -i input.png "$d/basic"
+
+    # Scale + explicit .png + seed + linear schedule
+    run "scale+linear+seed" ./upscale.py -i input.png --scale 110 --linear -S 42 "$d/scale.png"
+
+    # Width-only + power schedule + custom prompt
+    run "width+power+prompt" ./upscale.py -i input.png -W 288 --power --power-alpha 3.0 -p "sharp" "$d/width"
+
+    # Height-only + -o flag + custom steps
+    run "height+oflag+steps" ./upscale.py -i input.png -H 288 -s 2 -o "$d/height.png"
+
+    # Both W+H + custom guidance
+    run "both-dims+guidance" ./upscale.py -i input.png -W 288 -H 288 -g 2.0 "$d/both"
+
+    # Evolution (2 iterations, tests output chaining)
+    run "evolve" ./upscale.py -i input.png -s 2 --evolve 2 "$d/evolve"
+
+    # Count (2 seeds, triggers precomputed single-ref path)
+    run "count" ./upscale.py -i input.png -s 2 --count 2 "$d/count"
+
+    # Count + evolve combined (precomputed + evolve, first_img_cache reuse)
+    run "count+evolve" ./upscale.py -i input.png -s 2 --count 2 --evolve 2 "$d/countevolve"
+
+    # Multi-reference, non-precomputed (iris_multiref with 2 refs)
+    run "multiref" ./upscale.py -i input.png -i avatar.png -p "blend" -W 288 -H 288 "$d/multiref"
+
+    # Multi-reference + count (precomputed multi-ref with persistent_ref_latents)
+    run "multiref+count" ./upscale.py -i input.png -i avatar.png -p "blend" -W 288 -H 288 -s 2 --count 2 "$d/multiref-count"
+
+    # Text-to-image (iris_generate, no input images)
+    run "txt2img" ./upscale.py -p "a small red circle" -W 256 -H 256 "$d/txt2img"
+
+    # Directory output with trailing /
+    run "dir-output" ./upscale.py -i input.png "$d/dir/"
+
+    echo ""
+    echo "=== All tests passed ==="
+    echo "Output: $d"
+    ls -la "$d"/ "$d/dir/" 2>/dev/null || true
 
 # Remove iris.c build artifacts
 iris-clean:
