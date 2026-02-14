@@ -328,8 +328,9 @@ Examples:
 
         # Pre-encode text and image for multi-seed generation (--count > 1).
         # Saves ~1.5-15s per additional seed by avoiding redundant Qwen3 and VAE work.
-        use_precomputed = count > 1 and not args.ref_images
+        use_precomputed = count > 1
         text_emb = text_emb_uncond = first_img_cache = None
+        persistent_ref_latents = []  # pre-encoded -i ref images
 
         if use_precomputed:
             text_emb, text_seq = ctx.encode_text(args.prompt)
@@ -338,6 +339,10 @@ Examples:
             else:
                 text_seq_uncond = 0
             ctx.release_text_encoder()
+
+            # Pre-encode persistent -i reference images (reused across all seeds/evolve)
+            for ref_path in args.ref_images:
+                persistent_ref_latents.append(ctx.encode_image(ref_path))
 
         for seed_idx in range(count):
             # Determine seed for this count iteration
@@ -374,31 +379,38 @@ Examples:
                 if evolve > 1:
                     label_parts.append(f"evolve {evo_idx}/{evolve}")
 
+                # Build input description: primary + any -i refs
+                inputs = str(evolving_input)
+                if args.ref_images:
+                    inputs += " + " + " + ".join(str(r) for r in args.ref_images)
+
                 if label_parts:
                     label = f"[{', '.join(label_parts)}]"
-                    print(f"{label}: {evolving_input} -> {out_path}{dim_str} (seed={seed})")
+                    print(f"{label}: {inputs} -> {out_path}{dim_str} (seed={seed})")
                 else:
-                    print(f"Upscaling: {evolving_input} -> {out_path}{dim_str} (seed={seed})")
+                    print(f"Upscaling: {inputs} -> {out_path}{dim_str} (seed={seed})")
 
                 gen_t0 = time.monotonic()
 
                 if use_precomputed:
-                    # Cache image latent for first evolve step (shared across seeds)
+                    # Cache primary image latent for first evolve step (shared across seeds)
                     if evo_idx == 1:
                         if first_img_cache is None:
                             first_img_cache = ctx.encode_image(evolving_input)
-                        img_lat, lat_h, lat_w = first_img_cache
+                        primary_lat = first_img_cache
                     else:
-                        img_lat, lat_h, lat_w = ctx.encode_image(evolving_input)
+                        primary_lat = ctx.encode_image(evolving_input)
 
-                    ctx.img2img_precomputed(
+                    # Combine primary + persistent -i refs
+                    all_ref_latents = [primary_lat] + persistent_ref_latents
+                    ctx.multiref_precomputed(
                         text_emb, text_seq, text_emb_uncond, text_seq_uncond,
-                        img_lat, lat_h, lat_w, out_path, params,
+                        all_ref_latents, out_path, params,
                     )
 
-                    # Free per-evolve image latents (not the cached first one)
+                    # Free per-evolve primary latents (not the cached first one)
                     if evo_idx > 1:
-                        ctx.free_encoded(img_lat)
+                        ctx.free_encoded(primary_lat[0])
                 else:
                     input_images = [evolving_input] + args.ref_images
                     ctx.multiref(args.prompt, input_images, out_path, params)
@@ -418,6 +430,8 @@ Examples:
             ctx.free_encoded(text_emb_uncond)
         if first_img_cache:
             ctx.free_encoded(first_img_cache[0])
+        for ref_lat in persistent_ref_latents:
+            ctx.free_encoded(ref_lat[0])
 
         ctx.close()
 

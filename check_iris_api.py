@@ -32,6 +32,7 @@ IRIS_H_FUNCTIONS = [
     "iris_encode_image",
     "iris_is_distilled",
     "iris_img2img_precomputed",
+    "iris_multiref_precomputed",
 ]
 
 IRIS_H_BLOCKS = [
