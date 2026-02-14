@@ -3,7 +3,7 @@
 # requires-python = ">=3.12"
 # dependencies = ["Pillow"]
 # ///
-# ABOUTME: Wrapper script for flux2.c super-resolution upscaling with smart scaling and evolution
+# ABOUTME: Wrapper script for iris.c super-resolution upscaling with smart scaling and evolution
 # ABOUTME: Adds dimension inference, percentage scaling, iterative evolution, and persistent reference images
 
 import argparse
@@ -23,7 +23,7 @@ def align16(n):
 def get_dimensions(args, input_path, max_area):
     """Compute output dimensions from args and input image.
 
-    Returns (in_w, in_h, out_w, out_h). out_w/out_h are None when flux should auto-detect.
+    Returns (in_w, in_h, out_w, out_h). out_w/out_h are None when iris should auto-detect.
     Prints a warning to stderr if the output area exceeds max_area.
     """
     img = Image.open(input_path)
@@ -110,9 +110,9 @@ def make_output_path(base_output, iteration, total):
     return base_output.with_stem(f"{base_output.stem}_{iteration:03d}")
 
 
-def run_flux(flux_bin, model_dir, input_images, output_path, width, height, extra_args):
-    """Build and run a single flux command. Returns the CompletedProcess."""
-    cmd = [str(flux_bin), "-d", str(model_dir)]
+def run_iris(iris_bin, model_dir, input_images, output_path, width, height, extra_args):
+    """Build and run a single iris command. Returns the CompletedProcess."""
+    cmd = [str(iris_bin), "-d", str(model_dir)]
 
     for img in input_images:
         cmd.extend(["-i", str(img)])
@@ -129,7 +129,7 @@ def run_flux(flux_bin, model_dir, input_images, output_path, width, height, extr
 
 def main():
     script_dir = Path(__file__).resolve().parent
-    flux_bin = script_dir / "flux2.c" / "flux"
+    iris_bin = script_dir / "iris.c" / "iris"
 
     parser = argparse.ArgumentParser(
         description="Upscale an image using Flux.2 Klein 4B super-resolution.",
@@ -166,7 +166,11 @@ Examples:
     )
     parser.add_argument(
         "--base", action="store_true",
-        help="Use base model (higher quality, ~25x slower). Uses flux-klein-base-model.",
+        help="Use base model (higher quality, ~25x slower)",
+    )
+    parser.add_argument(
+        "--9b", dest="nine_b", action="store_true",
+        help="Use 9B model (larger, non-commercial). Requires setup: ./setup.sh --9b",
     )
     parser.add_argument(
         "-i",
@@ -177,10 +181,10 @@ Examples:
         help="Additional reference image (repeatable, passed to every iteration)",
     )
     parser.add_argument(
-        "-W", "--width", type=int, default=None, help="Output width (default: flux auto-detect)"
+        "-W", "--width", type=int, default=None, help="Output width (default: iris auto-detect)"
     )
     parser.add_argument(
-        "-H", "--height", type=int, default=None, help="Output height (default: flux auto-detect)"
+        "-H", "--height", type=int, default=None, help="Output height (default: iris auto-detect)"
     )
     parser.add_argument(
         "--scale",
@@ -201,85 +205,86 @@ Examples:
         help="Pixel area warning threshold (default: 1048576 = 1024x1024)",
     )
 
-    flux_group = parser.add_argument_group(
-        "Common flux options (passed through to flux)"
+    iris_group = parser.add_argument_group(
+        "Common iris options (passed through to iris)"
     )
-    flux_group.add_argument(
+    iris_group.add_argument(
         "-p", "--prompt", default="Create an exact copy of the input image.",
         help='Text prompt (default: "Create an exact copy of the input image.")',
     )
-    flux_group.add_argument(
+    iris_group.add_argument(
         "-s", "--steps", type=int, default=None,
         help="Sampling steps (default: auto, 4 distilled / 50 base)",
     )
-    flux_group.add_argument(
+    iris_group.add_argument(
         "-g", "--guidance", type=float, default=None,
         help="CFG guidance scale (default: auto, 1.0 distilled / 4.0 base)",
     )
-    flux_group.add_argument(
+    iris_group.add_argument(
         "-S", "--seed", type=int, default=None,
         help="Random seed for reproducibility",
     )
-    flux_group.add_argument(
+    iris_group.add_argument(
         "--linear", action="store_true",
         help="Use linear timestep schedule (faster preview with fewer steps)",
     )
-    flux_group.add_argument(
+    iris_group.add_argument(
         "--power", action="store_true",
         help="Use power curve timestep schedule",
     )
-    flux_group.add_argument(
+    iris_group.add_argument(
         "--power-alpha", type=float, default=None,
         help="Power schedule exponent (default: 2.0)",
     )
-    flux_group.add_argument(
+    iris_group.add_argument(
         "-v", "--verbose", action="store_true",
         help="Show detailed output",
     )
-    flux_group.add_argument(
+    iris_group.add_argument(
         "-q", "--quiet", action="store_true",
         help="Silent mode, no output",
     )
-    flux_group.add_argument(
+    iris_group.add_argument(
         "--show", action="store_true",
         help="Display image in terminal (Kitty/Ghostty/iTerm2)",
     )
-    flux_group.add_argument(
+    iris_group.add_argument(
         "--show-steps", action="store_true",
         help="Display each denoising step (slower)",
     )
 
     args, extra_args = parser.parse_known_args()
 
-    # Select model directory based on --base flag
+    # Select model directory based on --9b and --base flags
+    size = "9b" if args.nine_b else "4b"
     if args.base:
-        model_dir = script_dir / "flux-klein-base-model"
+        model_dir = script_dir / f"flux-klein-{size}-base"
     else:
-        model_dir = script_dir / "flux-klein-model"
+        model_dir = script_dir / f"flux-klein-{size}"
 
-    # Rebuild known flux flags into the passthrough list
-    flux_passthrough = ["-p", args.prompt]
+    # Rebuild known iris flags into the passthrough list
+    iris_passthrough = ["-p", args.prompt]
     if args.steps is not None:
-        flux_passthrough.extend(["-s", str(args.steps)])
+        iris_passthrough.extend(["-s", str(args.steps)])
     if args.guidance is not None:
-        flux_passthrough.extend(["-g", str(args.guidance)])
+        iris_passthrough.extend(["-g", str(args.guidance)])
     if args.seed is not None:
-        flux_passthrough.extend(["-S", str(args.seed)])
+        iris_passthrough.extend(["-S", str(args.seed)])
     if args.linear:
-        flux_passthrough.append("--linear")
+        iris_passthrough.append("--linear")
     if args.power:
-        flux_passthrough.append("--power")
+        iris_passthrough.append("--power")
     if args.power_alpha is not None:
-        flux_passthrough.extend(["--power-alpha", str(args.power_alpha)])
+        iris_passthrough.extend(["--power-alpha", str(args.power_alpha)])
     if args.verbose:
-        flux_passthrough.append("-v")
+        iris_passthrough.append("-v")
     if args.quiet:
-        flux_passthrough.append("-q")
+        iris_passthrough.append("-q")
     if args.show:
-        flux_passthrough.append("--show")
+        iris_passthrough.append("--show")
     if args.show_steps:
-        flux_passthrough.append("--show-steps")
-    flux_passthrough.extend(extra_args)
+        iris_passthrough.append("--show-steps")
+    iris_passthrough.extend(extra_args)
 
     # --- Validation ---
 
@@ -311,9 +316,9 @@ Examples:
             print(f"Error: Output directory not found: {output_dir}", file=sys.stderr)
             sys.exit(1)
 
-    if not flux_bin.exists():
-        print(f"Error: flux binary not found at {flux_bin}", file=sys.stderr)
-        print("Run ./setup.sh first to build flux2.c", file=sys.stderr)
+    if not iris_bin.exists():
+        print(f"Error: iris binary not found at {iris_bin}", file=sys.stderr)
+        print("Run ./setup.sh first to build iris.c", file=sys.stderr)
         sys.exit(1)
 
     if not model_dir.exists():
@@ -336,7 +341,7 @@ Examples:
             out_path = make_output_path(output_path, i, total)
             input_images = [evolving_input] + args.ref_images
 
-            # Only pass dimensions on first iteration; subsequent ones let flux auto-detect
+            # Only pass dimensions on first iteration; subsequent ones let iris auto-detect
             iter_w = width if i == 1 else None
             iter_h = height if i == 1 else None
 
@@ -350,19 +355,19 @@ Examples:
             else:
                 print(f"Upscaling: {evolving_input} -> {out_path}{dim_str}")
 
-            result = run_flux(
-                flux_bin, model_dir, input_images, out_path, iter_w, iter_h, flux_passthrough
+            result = run_iris(
+                iris_bin, model_dir, input_images, out_path, iter_w, iter_h, iris_passthrough
             )
 
             if result.returncode != 0:
                 if total > 1:
                     print(
-                        f"Error: flux failed on iteration {i}/{total} (exit code {result.returncode})",
+                        f"Error: iris failed on iteration {i}/{total} (exit code {result.returncode})",
                         file=sys.stderr,
                     )
                 else:
                     print(
-                        f"Error: flux exited with code {result.returncode}",
+                        f"Error: iris exited with code {result.returncode}",
                         file=sys.stderr,
                     )
                 sys.exit(result.returncode)
