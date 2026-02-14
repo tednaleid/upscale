@@ -17,6 +17,7 @@ SNAPSHOT = SCRIPT_DIR / "iris_api.snapshot"
 FUNCTIONS = [
     "iris_load_dir",
     "iris_free",
+    "iris_set_mmap",
     "iris_image_load",
     "iris_image_save",
     "iris_image_save_with_seed",

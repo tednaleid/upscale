@@ -9,6 +9,7 @@
 import argparse
 import random
 import sys
+import time
 from pathlib import Path
 
 from PIL import Image
@@ -306,9 +307,16 @@ Examples:
     evolve = args.evolve
     total_images = count * evolve
 
+    def on_step(step, total):
+        print(f"  Step {step + 1}/{total}", flush=True)
+
     try:
+        t0 = time.monotonic()
         print(f"Loading model from {model_dir}...")
         ctx = IrisContext(model_dir)
+        print(f"Model loaded ({time.monotonic() - t0:.1f}s)")
+
+        ctx.set_step_callback(on_step)
 
         for seed_idx in range(count):
             # Determine seed for this count iteration
@@ -352,15 +360,20 @@ Examples:
                 else:
                     print(f"Upscaling: {evolving_input} -> {out_path}{dim_str} (seed={seed})")
 
+                gen_t0 = time.monotonic()
                 ctx.multiref(args.prompt, input_images, out_path, params)
+                gen_elapsed = time.monotonic() - gen_t0
+                print(f"Saved {out_path} ({gen_elapsed:.1f}s)")
+
                 evolving_input = out_path
 
         ctx.close()
 
+        total_elapsed = time.monotonic() - t0
         if total_images > 1:
-            print(f"Done: {total_images} images generated")
+            print(f"Done: {total_images} images generated ({total_elapsed:.1f}s total)")
         else:
-            print(f"Done: {out_path}")
+            print(f"Done: {out_path} ({total_elapsed:.1f}s total)")
 
     except KeyboardInterrupt:
         print("\nInterrupted", file=sys.stderr)
