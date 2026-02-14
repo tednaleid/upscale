@@ -4,8 +4,11 @@
 iris_dir := justfile_directory() / "iris.c"
 bin_link := home_directory() / ".local" / "bin" / "upscale"
 
-# Clone iris.c, build, and download all models (9B requires HF_TOKEN, skipped without it)
-default: iris-dylib download-4b download-9b
+# Clone/update iris.c, build, and download all models (9B requires HF_TOKEN, skipped without it)
+default: iris-update download-4b download-9b
+
+# Pull latest iris.c, verify API compatibility, rebuild, and link dylib
+iris-update: iris-pull iris-check iris-build iris-dylib
 
 # Clone iris.c or pull/rebase latest main
 iris-pull:
@@ -20,8 +23,8 @@ iris-pull:
         git clone https://github.com/antirez/iris.c.git "{{ iris_dir }}"
     fi
 
-# Build iris.c for the current platform
-iris-build: iris-pull
+# Build iris.c for the current platform (assumes iris-pull already ran)
+iris-build:
     #!/usr/bin/env bash
     set -eu
     cd "{{ iris_dir }}"
@@ -45,8 +48,20 @@ iris-build: iris-pull
     fi
     echo "Build complete!"
 
-# Build shared library for Python ctypes usage
-iris-dylib: iris-build
+# Check if iris.h API surface has changed from what iris_ffi.py expects
+iris-check:
+    #!/usr/bin/env bash
+    set -eu
+    python3 "{{ justfile_directory() }}/check_iris_api.py" || {
+        echo ""
+        echo "  iris_ffi.py may need updating to match the new API."
+        echo "  After verifying, run: python3 check_iris_api.py --update"
+        echo ""
+        exit 1
+    }
+
+# Link shared library for Python ctypes usage (assumes iris-build already ran)
+iris-dylib:
     #!/usr/bin/env bash
     set -eu
     cd "{{ iris_dir }}"
