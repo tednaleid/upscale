@@ -16,6 +16,8 @@ from PIL import Image
 
 from iris_ffi import IrisContext, IrisParams, IRIS_SCHEDULE_LINEAR, IRIS_SCHEDULE_POWER
 
+DEFAULT_PROMPT = "Create an exact copy of the input image."
+
 
 def align16(n):
     """Round down to nearest multiple of 16."""
@@ -23,14 +25,18 @@ def align16(n):
 
 
 def get_dimensions(args, input_path, max_area):
-    """Compute output dimensions from args and input image.
+    """Compute output dimensions from args and optional input image.
 
-    Returns (in_w, in_h, out_w, out_h). out_w/out_h are None when iris should auto-detect.
+    Returns (in_w, in_h, out_w, out_h). in_w/in_h are None when no input image.
+    out_w/out_h are None when iris should auto-detect.
     Prints a warning to stderr if the output area exceeds max_area.
     """
-    img = Image.open(input_path)
-    in_w, in_h = img.size
-    img.close()
+    if input_path:
+        img = Image.open(input_path)
+        in_w, in_h = img.size
+        img.close()
+    else:
+        in_w, in_h = None, None
 
     width, height = None, None
 
@@ -43,14 +49,16 @@ def get_dimensions(args, input_path, max_area):
             width, height = args.width, args.height
         elif args.width is not None:
             width = args.width
-            height = align16(round(width * in_h / in_w))
+            if in_h:
+                height = align16(round(width * in_h / in_w))
         else:
             height = args.height
-            width = align16(round(height * in_w / in_h))
+            if in_w:
+                width = align16(round(height * in_w / in_h))
 
     # Area warning
-    check_w = width if width is not None else in_w
-    check_h = height if height is not None else in_h
+    check_w = width if width is not None else (in_w or 256)
+    check_h = height if height is not None else (in_h or 256)
     area = check_w * check_h
     if area > max_area:
         megapixels = area / 1_000_000
@@ -63,23 +71,24 @@ def get_dimensions(args, input_path, max_area):
     return in_w, in_h, width, height
 
 
-def resolve_output_path(output_str, input_path):
+def resolve_output_path(output_str, input_path=None):
     """Resolve the output path from the optional output argument.
 
     Rules:
-    - None (omitted): auto-number using input stem in current directory
+    - None (omitted): auto-number using input stem (or "generated") in current directory
     - Ends with '/': treat as directory (created if needed), auto-number using input stem
     - Ends with '.png': use as-is, overwrite on subsequent runs
     - Otherwise: treat as base name, auto-number with that name
 
     Returns (resolved_path, auto_numbered).
     """
+    stem = input_path.stem if input_path else "generated"
     if output_str is None:
         directory = Path(".")
-        base_name = input_path.stem
+        base_name = stem
     elif output_str.endswith("/"):
         directory = Path(output_str)
-        base_name = input_path.stem
+        base_name = stem
     elif output_str.endswith(".png"):
         return Path(output_str), False
     else:
@@ -135,37 +144,46 @@ def main():
     script_dir = Path(__file__).resolve().parent
 
     parser = argparse.ArgumentParser(
-        description="Upscale an image using Flux.2 Klein 4B super-resolution.",
+        description="Upscale or generate images using Flux.2 Klein super-resolution.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Auto-number output: creates input-00000.png (or next free number)
-  %(prog)s input.png
+  # Upscale: auto-numbered output (input-00000.png)
+  %(prog)s -i input.png
 
   # Output to directory (created if needed): results/input-00000.png
-  %(prog)s input.png results/
+  %(prog)s -i input.png results/
 
   # Custom base name: upscaled-00000.png
-  %(prog)s input.png upscaled
+  %(prog)s -i input.png upscaled
 
   # Explicit .png: always overwrites
-  %(prog)s input.png output.png
+  %(prog)s -i input.png output.png
 
   # Scale to 200%% (2x), dimensions aligned to 16px
-  %(prog)s input.png --scale 200
+  %(prog)s -i input.png --scale 200
 
   # Evolve 3 iterations with a persistent reference image
-  %(prog)s input.png -i ref.png --evolve 3 -p "blend with reference"
+  %(prog)s -i input.png -i ref.png --evolve 3 -p "blend with reference"
 
   # Generate 3 variations with different seeds, model loaded once
-  %(prog)s input.png --count 3
+  %(prog)s -i input.png --count 3
+
+  # Text-to-image (no input image)
+  %(prog)s -p "a cat sitting on a rainbow" -W 512 -H 512
+
+  # Multi-reference generation
+  %(prog)s -i car.png -i beach.png -p "sports car on beach" -W 512 -H 512
 """,
     )
 
-    parser.add_argument("input", type=Path, help="Path to input image")
     parser.add_argument(
         "output", nargs="?", default=None,
         help="Output path (.png = overwrite, no ext = auto-number, trailing / = directory)",
+    )
+    parser.add_argument(
+        "-o", dest="output_flag", default=None,
+        help="Output path (alternative to positional)",
     )
     parser.add_argument(
         "--base", action="store_true",
@@ -177,11 +195,11 @@ Examples:
     )
     parser.add_argument(
         "-i",
-        dest="ref_images",
+        dest="images",
         type=Path,
         action="append",
         default=[],
-        help="Additional reference image (repeatable, passed to every iteration)",
+        help="Input image (repeatable). First is primary (evolves), rest are persistent refs.",
     )
     parser.add_argument(
         "-W", "--width", type=int, default=None, help="Output width (default: iris auto-detect)"
@@ -216,8 +234,8 @@ Examples:
 
     iris_group = parser.add_argument_group("Generation options")
     iris_group.add_argument(
-        "-p", "--prompt", default="Create an exact copy of the input image.",
-        help='Text prompt (default: "Create an exact copy of the input image.")',
+        "-p", "--prompt", default=DEFAULT_PROMPT,
+        help=f'Text prompt (default: "{DEFAULT_PROMPT}")',
     )
     iris_group.add_argument(
         "-s", "--steps", type=int, default=None,
@@ -253,12 +271,22 @@ Examples:
     )
     args = parser.parse_args()
 
+    # Split -i images: first is primary (evolves), rest are persistent refs
+    primary_input = args.images[0] if args.images else None
+    persistent_refs = args.images[1:] if len(args.images) > 1 else []
+
     # Select model directory based on --9b and --base flags
     size = "9b" if args.nine_b else "4b"
     if args.base:
         model_dir = script_dir / f"flux-klein-{size}-base"
     else:
         model_dir = script_dir / f"flux-klein-{size}"
+
+    # Merge -o flag with positional output
+    if args.output_flag:
+        if args.output is not None:
+            parser.error("Cannot use both positional output and -o")
+        args.output = args.output_flag
 
     # --- Validation ---
 
@@ -274,17 +302,26 @@ Examples:
     if args.count < 1:
         parser.error("--count must be >= 1")
 
-    if not args.input.exists():
-        print(f"Error: Input file not found: {args.input}", file=sys.stderr)
-        sys.exit(1)
+    if primary_input is None:
+        # Text-to-image or ref-only mode
+        if args.scale is not None:
+            parser.error("--scale requires an input image (-i)")
+        if (args.width is not None) != (args.height is not None):
+            parser.error("Without an input image, both -W and -H are required (can't infer aspect ratio)")
+        if args.prompt == DEFAULT_PROMPT:
+            parser.error("-p/--prompt is required when no input image is given")
+    else:
+        if not primary_input.exists():
+            print(f"Error: Input file not found: {primary_input}", file=sys.stderr)
+            sys.exit(1)
 
-    for ref in args.ref_images:
+    for ref in persistent_refs:
         if not ref.exists():
             print(f"Error: Reference image not found: {ref}", file=sys.stderr)
             sys.exit(1)
 
     # Resolve output path (auto-number, directory creation, etc.)
-    output_path, auto_numbered = resolve_output_path(args.output, args.input)
+    output_path, auto_numbered = resolve_output_path(args.output, primary_input)
 
     # For explicit .png paths, validate parent directory exists
     if not auto_numbered:
@@ -306,7 +343,7 @@ Examples:
 
     # --- Dimension calculation (iteration 1 only) ---
 
-    in_w, in_h, width, height = get_dimensions(args, args.input, args.max_area)
+    in_w, in_h, width, height = get_dimensions(args, primary_input, args.max_area)
 
     # --- Generation loop (count x evolve) ---
 
@@ -328,9 +365,10 @@ Examples:
 
         # Pre-encode text and image for multi-seed generation (--count > 1).
         # Saves ~1.5-15s per additional seed by avoiding redundant Qwen3 and VAE work.
-        use_precomputed = count > 1
+        # Only when there's at least one image — pure txt2img lets iris handle encoding.
+        use_precomputed = count > 1 and (primary_input is not None or persistent_refs)
         text_emb = text_emb_uncond = first_img_cache = None
-        persistent_ref_latents = []  # pre-encoded -i ref images
+        persistent_ref_latents = []  # pre-encoded persistent ref images
 
         if use_precomputed:
             text_emb, text_seq = ctx.encode_text(args.prompt)
@@ -340,8 +378,8 @@ Examples:
                 text_seq_uncond = 0
             ctx.release_text_encoder()
 
-            # Pre-encode persistent -i reference images (reused across all seeds/evolve)
-            for ref_path in args.ref_images:
+            # Pre-encode persistent reference images (reused across all seeds/evolve)
+            for ref_path in persistent_refs:
                 persistent_ref_latents.append(ctx.encode_image(ref_path))
 
         for seed_idx in range(count):
@@ -355,9 +393,9 @@ Examples:
             if seed_idx == 0:
                 seed_output = output_path
             else:
-                seed_output, _ = resolve_output_path(args.output, args.input)
+                seed_output, _ = resolve_output_path(args.output, primary_input)
 
-            evolving_input = args.input
+            evolving_input = primary_input
 
             for evo_idx in range(1, evolve + 1):
                 out_path = make_output_path(seed_output, evo_idx, evolve)
@@ -368,10 +406,14 @@ Examples:
 
                 params = build_params(args, iter_w, iter_h, seed)
 
-                if iter_w:
+                if iter_w and in_w:
                     dim_str = f" ({in_w}x{in_h} -> {iter_w}x{iter_h})"
-                else:
+                elif iter_w:
+                    dim_str = f" ({iter_w}x{iter_h})"
+                elif in_w:
                     dim_str = f" ({in_w}x{in_h})"
+                else:
+                    dim_str = ""
 
                 label_parts = []
                 if count > 1:
@@ -379,40 +421,48 @@ Examples:
                 if evolve > 1:
                     label_parts.append(f"evolve {evo_idx}/{evolve}")
 
-                # Build input description: primary + any -i refs
-                inputs = str(evolving_input)
-                if args.ref_images:
-                    inputs += " + " + " + ".join(str(r) for r in args.ref_images)
+                # Build input description: primary + any persistent refs
+                input_parts = []
+                if evolving_input:
+                    input_parts.append(str(evolving_input))
+                input_parts.extend(str(r) for r in persistent_refs)
+                inputs = " + ".join(input_parts) if input_parts else "(text-to-image)"
 
                 if label_parts:
                     label = f"[{', '.join(label_parts)}]"
                     print(f"{label}: {inputs} -> {out_path}{dim_str} (seed={seed})")
                 else:
-                    print(f"Upscaling: {inputs} -> {out_path}{dim_str} (seed={seed})")
+                    action = "Upscaling" if primary_input else "Generating"
+                    print(f"{action}: {inputs} -> {out_path}{dim_str} (seed={seed})")
 
                 gen_t0 = time.monotonic()
 
                 if use_precomputed:
-                    # Cache primary image latent for first evolve step (shared across seeds)
-                    if evo_idx == 1:
-                        if first_img_cache is None:
-                            first_img_cache = ctx.encode_image(evolving_input)
-                        primary_lat = first_img_cache
+                    if evolving_input:
+                        # Cache primary image latent for first evolve step (shared across seeds)
+                        if evo_idx == 1:
+                            if first_img_cache is None:
+                                first_img_cache = ctx.encode_image(evolving_input)
+                            primary_lat = first_img_cache
+                        else:
+                            primary_lat = ctx.encode_image(evolving_input)
+                        all_ref_latents = [primary_lat] + persistent_ref_latents
                     else:
-                        primary_lat = ctx.encode_image(evolving_input)
+                        all_ref_latents = list(persistent_ref_latents)
 
-                    # Combine primary + persistent -i refs
-                    all_ref_latents = [primary_lat] + persistent_ref_latents
                     ctx.multiref_precomputed(
                         text_emb, text_seq, text_emb_uncond, text_seq_uncond,
                         all_ref_latents, out_path, params,
                     )
 
                     # Free per-evolve primary latents (not the cached first one)
-                    if evo_idx > 1:
+                    if evolving_input and evo_idx > 1:
                         ctx.free_encoded(primary_lat[0])
                 else:
-                    input_images = [evolving_input] + args.ref_images
+                    input_images = []
+                    if evolving_input:
+                        input_images.append(evolving_input)
+                    input_images.extend(persistent_refs)
                     ctx.multiref(args.prompt, input_images, out_path, params)
 
                 gen_elapsed = time.monotonic() - gen_t0

@@ -4,9 +4,9 @@ Use the Flux.2 Klein 4B model as a super-resolution upscaler, based on [antirez'
 
 ## How It Works
 
-Flux.2 Klein uses "in-context conditioning" - instead of adding noise to the input image like traditional img2img, it passes the reference image as tokens that the transformer attends to during generation. This allows the model to intelligently upscale while preserving composition and details.
+Flux.2 Klein uses "in-context conditioning" — instead of adding noise to the input image like traditional img2img, it passes the reference image as tokens that the transformer attends to during generation. This allows the model to upscale while preserving composition and details.
 
-The key insight is using a prompt like "Create an exact copy of the input image" with a larger output resolution than the input, effectively turning a generative model into a super-resolution tool.
+The key insight is using a prompt like "Create an exact copy of the input image" with a larger output resolution than the input, turning a generative model into a super-resolution tool.
 
 ## Requirements
 
@@ -49,20 +49,38 @@ The 9B models require a [HuggingFace token](https://huggingface.co/settings/toke
 
 ## Usage
 
-### Basic Upscaling
+All input images are provided with `-i`. The first `-i` is the primary image (used for upscaling, evolves across iterations). Additional `-i` flags add persistent reference images. Output is a positional argument or `-o`.
+
+### Upscaling
 
 ```bash
 # Auto-number output: creates input-00000.png (or next free number)
-./upscale.py input.png
+./upscale.py -i input.png
 
 # Scale to 200% (2x), dimensions aligned to 16px boundaries
-./upscale.py input.png --scale 200
+./upscale.py -i input.png --scale 200
 
 # Explicit width, height inferred from input aspect ratio
-./upscale.py input.png -W 1024
+./upscale.py -i input.png -W 1024
 
 # Explicit .png path: always overwrites on subsequent runs
-./upscale.py input.png output.png
+./upscale.py -i input.png output.png
+```
+
+### Text-to-Image
+
+When no `-i` is given, generates from the prompt alone. Both `-W` and `-H` are required (no input to infer aspect ratio from).
+
+```bash
+./upscale.py -p "a cat sitting on a rainbow" -W 512 -H 512
+```
+
+### Multi-Reference Generation
+
+Multiple `-i` flags condition the output on all provided images:
+
+```bash
+./upscale.py -i car.png -i beach.png -p "sports car on beach" -W 512 -H 512
 ```
 
 ### Output Naming
@@ -71,10 +89,10 @@ The output argument is optional and controls naming behavior:
 
 | Command | Output file |
 |---------|------------|
-| `./upscale.py input.png` | `input-00000.png` (auto-increments) |
-| `./upscale.py input.png results/` | `results/input-00000.png` (dir created if needed) |
-| `./upscale.py input.png upscaled` | `upscaled-00000.png` (auto-increments) |
-| `./upscale.py input.png output.png` | `output.png` (overwrites) |
+| `./upscale.py -i input.png` | `input-00000.png` (auto-increments) |
+| `./upscale.py -i input.png results/` | `results/input-00000.png` (dir created if needed) |
+| `./upscale.py -i input.png upscaled` | `upscaled-00000.png` (auto-increments) |
+| `./upscale.py -i input.png output.png` | `output.png` (overwrites) |
 
 Auto-numbered outputs never overwrite — the number increments to find the next free filename. Only explicit `.png` paths overwrite.
 
@@ -84,13 +102,13 @@ The base (undistilled) model produces higher quality results at the cost of spee
 
 ```bash
 # Base model - higher quality, slower
-./upscale.py input.png --base
+./upscale.py -i input.png --base
 
 # Base with linear schedule and fewer steps for a quick preview
-./upscale.py input.png --base --linear -s 10
+./upscale.py -i input.png --base --linear -s 10
 
 # Base with custom guidance
-./upscale.py input.png --base -g 6.0
+./upscale.py -i input.png --base -g 6.0
 ```
 
 ### 9B Model
@@ -99,28 +117,28 @@ The 9B model is larger and may produce better results. Combine with `--base` for
 
 ```bash
 # 9B distilled
-./upscale.py input.png --9b
+./upscale.py -i input.png --9b
 
 # 9B base (highest quality, slowest)
-./upscale.py input.png --9b --base
+./upscale.py -i input.png --9b --base
 ```
 
 ### Options
 
 ```
 Positional:
-  input                 Path to input image
   output                Output path (optional, .png = overwrite, no ext = auto-number, / = directory)
 
-Upscale options:
+Input/output:
+  -i PATH               Input image (repeatable). First is primary (evolves), rest are persistent refs.
+  -o PATH               Output path (alternative to positional)
   --base                Use base model (higher quality, ~25x slower)
-  --9b                  Use 9B model (larger, non-commercial). Download with: HF_TOKEN=... just download-9b
+  --9b                  Use 9B model (larger, non-commercial)
   -W, --width N         Output width (default: iris auto-detect from input)
   -H, --height N        Output height (default: iris auto-detect from input)
   --scale N             Scale percentage (e.g. 200 = 2x). Mutually exclusive with -W/-H.
-  -i PATH               Additional reference image (repeatable, passed to every iteration)
   --evolve N            Number of evolution iterations (default: 1)
-  --count N             Generate N images with different seeds, model loaded once (default: 1)
+  --count N             Generate N images with different seeds (default: 1)
   --max-area N          Pixel area warning threshold (default: 1048576 = 1024x1024)
 
 Generation options:
@@ -137,7 +155,7 @@ Generation options:
 
 ### Dimension Handling
 
-When `-W`/`-H` are omitted, iris auto-detects dimensions from the input image. The wrapper adds smart options on top:
+When `-W`/`-H` are omitted, iris auto-detects dimensions from the input image. The wrapper adds options on top:
 
 - **`--scale 200`** — reads input dimensions, multiplies by 2x, aligns to 16px boundaries
 - **`-W 1024`** (width only) — infers height from the input's aspect ratio, aligned to 16px
@@ -151,61 +169,49 @@ A warning is printed to stderr if the output area exceeds `--max-area` (default 
 Use `--evolve N` to iteratively refine an image by feeding each output back as the next input:
 
 ```bash
-# 3 evolution iterations — produces input-00000_001.png, input-00000_002.png, input-00000_003.png
-./upscale.py input.png --evolve 3
+# 3 evolution iterations — produces input-00000_001.png, _002.png, _003.png
+./upscale.py -i input.png --evolve 3
 ```
 
-Each iteration feeds the previous output as the primary input to iris. Dimensions are only set on the first iteration; subsequent iterations let iris auto-detect from the previous output.
+Each iteration feeds the previous output as the primary input to iris. Dimensions are only set on the first iteration; subsequent iterations let iris auto-detect from the previous output. Persistent reference images (`-i` after the first) are passed to every iteration.
 
 ### Multi-Seed Generation
 
-Use `--count N` to generate N images with different random seeds. The model is loaded once and reused for all images, saving ~35s per additional image:
+Use `--count N` to generate N images with different random seeds. The model is loaded once and reused for all images. For `--count` > 1 with input images, text embeddings and image latents are pre-encoded once and reused across seeds, saving ~1.5-15s per additional seed depending on model size and image dimensions.
 
 ```bash
 # Generate 3 variations
-./upscale.py input.png --count 3
+./upscale.py -i input.png --count 3
 
 # First image uses seed 42, remaining 2 get random seeds
-./upscale.py input.png --count 3 --seed 42
+./upscale.py -i input.png --count 3 --seed 42
 
 # Combine with evolution: 2 seeds x 3 evolve = 6 images total
-./upscale.py input.png --count 2 --evolve 3
+./upscale.py -i input.png --count 2 --evolve 3
 ```
 
-Each seed iteration gets its own auto-numbered output base (e.g. `input-00000.png`, `input-00001.png`, `input-00002.png`). When combined with `--evolve`, each seed's evolution iterations are numbered within its base.
-
-### Persistent Reference Images
-
-Use `-i` to pass additional reference images that persist across all evolution iterations:
-
-```bash
-# Blend with a style reference across 3 iterations
-./upscale.py input.png -i style.png --evolve 3 -p "blend with reference style"
-```
-
-This runs:
-```
-Iteration 1: iris -i input.png              -i style.png -o input-00000_001.png -p "..."
-Iteration 2: iris -i input-00000_001.png    -i style.png -o input-00000_002.png -p "..."
-Iteration 3: iris -i input-00000_002.png    -i style.png -o input-00000_003.png -p "..."
-```
-
-Multiple `-i` flags can be used to pass several reference images.
+Each seed iteration gets its own auto-numbered output base (e.g. `input-00000.png`, `input-00001.png`). When combined with `--evolve`, each seed's evolution iterations are numbered within its base.
 
 ### Examples
 
 ```bash
 # Simple upscale, auto-named output
-./upscale.py small.png
+./upscale.py -i small.png
 
-# 4x upscale with higher quality, custom base name
-./upscale.py thumb.png large --scale 400 -s 8
+# 4x upscale, custom base name
+./upscale.py -i thumb.png large --scale 400 -s 8
 
 # Width-only, aspect ratio preserved, explicit overwrite path
-./upscale.py photo.png wide.png -W 2048 -p "high resolution landscape"
+./upscale.py -i photo.png -o wide.png -W 2048 -p "high resolution landscape"
 
 # Evolve with style reference, output to directory
-./upscale.py sketch.png results/ -i style.png --evolve 5 --show -p "oil painting style"
+./upscale.py -i sketch.png -i style.png results/ --evolve 5 --show -p "oil painting style"
+
+# Text-to-image
+./upscale.py -p "mountain landscape at sunset" -W 512 -H 512
+
+# Multi-reference conditioning
+./upscale.py -i car.png -i beach.png -p "sports car on beach" -W 512 -H 512
 ```
 
 ## Direct iris.c Usage
@@ -238,10 +244,10 @@ For more control, use the iris binary directly:
 
 ## Tips
 
-- **Prompt matters**: While "Create an exact copy" works well, describing the desired output ("A high resolution photograph with sharp details") can sometimes produce better results.
+- **Prompt matters**: While "Create an exact copy" works well for upscaling, describing the desired output ("A high resolution photograph with sharp details") can sometimes produce better results.
 - **More steps = better quality**: Distilled default is 4 steps (fast). Try 8-12 for higher quality at the cost of speed.
-- **Base model**: Use `--base` for the highest quality. Combine with `--linear -s 10` for a faster preview.
-- **9B model**: Use `--9b` for the larger model. Combine with `--base` for the absolute best quality (slowest).
+- **Base model**: Use `--base` for highest quality. Combine with `--linear -s 10` for a faster preview.
+- **9B model**: Use `--9b` for the larger model. Combine with `--base` for the best quality (slowest).
 - **Aspect ratio**: When using `-W` or `-H` alone, the other dimension is inferred from the input aspect ratio and aligned to 16px boundaries.
 - **Evolution**: Multiple iterations can progressively refine details. Start with 2-3 and increase if needed.
 - **Memory**: Uses memory-mapped weights by default, keeping RAM usage low.

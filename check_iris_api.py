@@ -23,6 +23,7 @@ IRIS_H_FUNCTIONS = [
     "iris_image_save",
     "iris_image_save_with_seed",
     "iris_image_free",
+    "iris_generate",
     "iris_img2img",
     "iris_multiref",
     "iris_get_error",

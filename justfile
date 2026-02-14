@@ -10,7 +10,7 @@ default: iris-update download-4b download-9b
 # Pull latest iris.c, verify API compatibility, rebuild, and link dylib
 iris-update: iris-pull iris-check iris-build iris-dylib
 
-# Clone iris.c or pull/rebase latest main
+# Clone iris.c or pull/rebase latest
 iris-pull:
     #!/usr/bin/env bash
     set -eu
@@ -20,7 +20,7 @@ iris-pull:
         git pull --rebase
     else
         echo "Cloning iris.c..."
-        git clone https://github.com/antirez/iris.c.git "{{ iris_dir }}"
+        git clone git@github.com:tednaleid/iris.c.git "{{ iris_dir }}"
     fi
 
 # Build iris.c for the current platform (assumes iris-pull already ran)
