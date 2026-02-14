@@ -307,16 +307,11 @@ Examples:
     evolve = args.evolve
     total_images = count * evolve
 
-    def on_step(step, total):
-        print(f"  Step {step + 1}/{total}", flush=True)
-
     try:
         t0 = time.monotonic()
         print(f"Loading model from {model_dir}...")
         ctx = IrisContext(model_dir)
         print(f"Model loaded ({time.monotonic() - t0:.1f}s)")
-
-        ctx.set_step_callback(on_step)
 
         for seed_idx in range(count):
             # Determine seed for this count iteration

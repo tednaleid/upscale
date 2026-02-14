@@ -10,11 +10,12 @@ from pathlib import Path
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-IRIS_H = SCRIPT_DIR / "iris.c" / "iris.h"
+IRIS_DIR = SCRIPT_DIR / "iris.c"
 SNAPSHOT = SCRIPT_DIR / "iris_api.snapshot"
 
-# Functions from iris.h that iris_ffi.py depends on
-FUNCTIONS = [
+# --- iris.h: functions and types iris_ffi.py depends on ---
+
+IRIS_H_FUNCTIONS = [
     "iris_load_dir",
     "iris_free",
     "iris_set_mmap",
@@ -27,11 +28,26 @@ FUNCTIONS = [
     "iris_get_error",
 ]
 
-# Named blocks to extract (start marker matched against line content)
-BLOCK_MARKERS = [
+IRIS_H_BLOCKS = [
     "struct iris_image {",
     "typedef struct {",       # iris_params
     "enum {",                 # schedule constants (first enum in file)
+]
+
+# --- iris_kernels.h: progress callback types and globals ---
+
+KERNELS_H_BLOCKS = [
+    "} iris_substep_type_t;",       # substep enum (match closing line)
+]
+
+# Lines to match exactly (substring match against each line)
+KERNELS_H_LINES = [
+    "(*iris_substep_callback_t)",   # substep callback typedef
+    "(*iris_step_callback_t)",      # step callback typedef
+    "(*iris_phase_callback_t)",     # phase callback typedef
+    "extern iris_substep_callback_t iris_substep_callback;",
+    "extern iris_step_callback_t iris_step_callback;",
+    "extern iris_phase_callback_t iris_phase_callback;",
 ]
 
 
@@ -65,33 +81,76 @@ def extract_function(lines, name):
     return None
 
 
-def extract_api(header_text):
-    """Extract the API surface iris_ffi.py depends on from iris.h."""
-    lines = header_text.split("\n")
+def extract_typedef_line(lines, ending):
+    """Extract a typedef/enum ending with the given text.
+
+    If the matching line contains '}', walk back to find the opening typedef/enum block.
+    Otherwise treat as a single-line declaration.
+    """
+    for i, line in enumerate(lines):
+        if ending in line:
+            if "}" not in line:
+                # Single-line typedef
+                return line
+            # Multi-line block: walk back to find opening typedef/enum
+            for j in range(i - 1, -1, -1):
+                if "typedef" in lines[j] or "enum" in lines[j]:
+                    return "\n".join(lines[j:i + 1])
+            return line
+    return None
+
+
+def extract_api():
+    """Extract the API surface iris_ffi.py depends on from iris.h and iris_kernels.h."""
+    iris_h = IRIS_DIR / "iris.h"
+    kernels_h = IRIS_DIR / "iris_kernels.h"
+
     sections = []
 
+    # --- iris.h ---
+    if not iris_h.exists():
+        return None, f"iris.h not found at {iris_h}"
+
+    h_lines = iris_h.read_text().split("\n")
+
     # Extract named blocks (structs, enums)
-    for marker in BLOCK_MARKERS:
-        for i, line in enumerate(lines):
+    for marker in IRIS_H_BLOCKS:
+        for i, line in enumerate(h_lines):
             if marker in line:
-                sections.append(extract_block(lines, i))
+                sections.append(extract_block(h_lines, i))
                 break
 
     # Extract function declarations
-    for func in FUNCTIONS:
-        decl = extract_function(lines, func)
+    for func in IRIS_H_FUNCTIONS:
+        decl = extract_function(h_lines, func)
         if decl:
             sections.append(decl)
 
-    return "\n\n".join(sections) + "\n"
+    # --- iris_kernels.h (progress callbacks) ---
+    if not kernels_h.exists():
+        return None, f"iris_kernels.h not found at {kernels_h}"
+
+    k_lines = kernels_h.read_text().split("\n")
+
+    for ending in KERNELS_H_BLOCKS:
+        block = extract_typedef_line(k_lines, ending)
+        if block:
+            sections.append(block)
+
+    for marker in KERNELS_H_LINES:
+        for line in k_lines:
+            if marker in line:
+                sections.append(line)
+                break
+
+    return "\n\n".join(sections) + "\n", None
 
 
 def main():
-    if not IRIS_H.exists():
-        print(f"iris.h not found at {IRIS_H}")
+    current, err = extract_api()
+    if err:
+        print(err)
         return 1
-
-    current = extract_api(IRIS_H.read_text())
 
     if "--update" in sys.argv:
         SNAPSHOT.write_text(current)
