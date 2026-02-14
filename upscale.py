@@ -7,12 +7,13 @@
 # ABOUTME: Adds dimension inference, percentage scaling, iterative evolution, and persistent reference images
 
 import argparse
-import shlex
-import subprocess
+import random
 import sys
 from pathlib import Path
 
 from PIL import Image
+
+from iris_ffi import IrisContext, IrisParams, IRIS_SCHEDULE_LINEAR, IRIS_SCHEDULE_POWER
 
 
 def align16(n):
@@ -110,26 +111,27 @@ def make_output_path(base_output, iteration, total):
     return base_output.with_stem(f"{base_output.stem}_{iteration:03d}")
 
 
-def run_iris(iris_bin, model_dir, input_images, output_path, width, height, extra_args):
-    """Build and run a single iris command. Returns the CompletedProcess."""
-    cmd = [str(iris_bin), "-d", str(model_dir)]
-
-    for img in input_images:
-        cmd.extend(["-i", str(img)])
-
-    if width is not None and height is not None:
-        cmd.extend(["-W", str(width), "-H", str(height)])
-
-    cmd.extend(["-o", str(output_path)])
-    cmd.extend(extra_args)
-
-    print(f"$ {shlex.join(cmd)}")
-    return subprocess.run(cmd)
+def build_params(args, width, height, seed):
+    """Build an IrisParams from parsed arguments and per-iteration overrides."""
+    params = IrisParams.default()
+    params.width = width if width is not None else 256
+    params.height = height if height is not None else 256
+    params.seed = seed if seed is not None else -1
+    if args.steps is not None:
+        params.num_steps = args.steps
+    if args.guidance is not None:
+        params.guidance = args.guidance
+    if args.linear:
+        params.schedule = IRIS_SCHEDULE_LINEAR
+    elif args.power:
+        params.schedule = IRIS_SCHEDULE_POWER
+    if args.power_alpha is not None:
+        params.power_alpha = args.power_alpha
+    return params
 
 
 def main():
     script_dir = Path(__file__).resolve().parent
-    iris_bin = script_dir / "iris.c" / "iris"
 
     parser = argparse.ArgumentParser(
         description="Upscale an image using Flux.2 Klein 4B super-resolution.",
@@ -154,8 +156,8 @@ Examples:
   # Evolve 3 iterations with a persistent reference image
   %(prog)s input.png -i ref.png --evolve 3 -p "blend with reference"
 
-  # Show in terminal, verbose, 8 steps
-  %(prog)s input.png --show -v -s 8
+  # Generate 3 variations with different seeds, model loaded once
+  %(prog)s input.png --count 3
 """,
     )
 
@@ -199,15 +201,19 @@ Examples:
         help="Number of evolution iterations (default: 1)",
     )
     parser.add_argument(
+        "--count",
+        type=int,
+        default=1,
+        help="Generate N images with different seeds, model loaded once (default: 1)",
+    )
+    parser.add_argument(
         "--max-area",
         type=int,
         default=1_048_576,
         help="Pixel area warning threshold (default: 1048576 = 1024x1024)",
     )
 
-    iris_group = parser.add_argument_group(
-        "Common iris options (passed through to iris)"
-    )
+    iris_group = parser.add_argument_group("Generation options")
     iris_group.add_argument(
         "-p", "--prompt", default="Create an exact copy of the input image.",
         help='Text prompt (default: "Create an exact copy of the input image.")',
@@ -236,24 +242,7 @@ Examples:
         "--power-alpha", type=float, default=None,
         help="Power schedule exponent (default: 2.0)",
     )
-    iris_group.add_argument(
-        "-v", "--verbose", action="store_true",
-        help="Show detailed output",
-    )
-    iris_group.add_argument(
-        "-q", "--quiet", action="store_true",
-        help="Silent mode, no output",
-    )
-    iris_group.add_argument(
-        "--show", action="store_true",
-        help="Display image in terminal (Kitty/Ghostty/iTerm2)",
-    )
-    iris_group.add_argument(
-        "--show-steps", action="store_true",
-        help="Display each denoising step (slower)",
-    )
-
-    args, extra_args = parser.parse_known_args()
+    args = parser.parse_args()
 
     # Select model directory based on --9b and --base flags
     size = "9b" if args.nine_b else "4b"
@@ -261,30 +250,6 @@ Examples:
         model_dir = script_dir / f"flux-klein-{size}-base"
     else:
         model_dir = script_dir / f"flux-klein-{size}"
-
-    # Rebuild known iris flags into the passthrough list
-    iris_passthrough = ["-p", args.prompt]
-    if args.steps is not None:
-        iris_passthrough.extend(["-s", str(args.steps)])
-    if args.guidance is not None:
-        iris_passthrough.extend(["-g", str(args.guidance)])
-    if args.seed is not None:
-        iris_passthrough.extend(["-S", str(args.seed)])
-    if args.linear:
-        iris_passthrough.append("--linear")
-    if args.power:
-        iris_passthrough.append("--power")
-    if args.power_alpha is not None:
-        iris_passthrough.extend(["--power-alpha", str(args.power_alpha)])
-    if args.verbose:
-        iris_passthrough.append("-v")
-    if args.quiet:
-        iris_passthrough.append("-q")
-    if args.show:
-        iris_passthrough.append("--show")
-    if args.show_steps:
-        iris_passthrough.append("--show-steps")
-    iris_passthrough.extend(extra_args)
 
     # --- Validation ---
 
@@ -296,6 +261,9 @@ Examples:
 
     if args.evolve < 1:
         parser.error("--evolve must be >= 1")
+
+    if args.count < 1:
+        parser.error("--count must be >= 1")
 
     if not args.input.exists():
         print(f"Error: Input file not found: {args.input}", file=sys.stderr)
@@ -316,9 +284,9 @@ Examples:
             print(f"Error: Output directory not found: {output_dir}", file=sys.stderr)
             sys.exit(1)
 
-    if not iris_bin.exists():
-        print(f"Error: iris binary not found at {iris_bin}", file=sys.stderr)
-        print("Run 'just' first to build iris.c", file=sys.stderr)
+    if not IrisContext.available():
+        print("Error: libiris.dylib not found", file=sys.stderr)
+        print("Run 'just' first to build iris.c and the shared library", file=sys.stderr)
         sys.exit(1)
 
     if not model_dir.exists():
@@ -331,51 +299,66 @@ Examples:
 
     in_w, in_h, width, height = get_dimensions(args, args.input, args.max_area)
 
-    # --- Evolution loop ---
+    # --- Generation loop (count x evolve) ---
 
-    total = args.evolve
-    evolving_input = args.input
+    base_seed = args.seed
+    count = args.count
+    evolve = args.evolve
+    total_images = count * evolve
 
     try:
-        for i in range(1, total + 1):
-            out_path = make_output_path(output_path, i, total)
-            input_images = [evolving_input] + args.ref_images
+        print(f"Loading model from {model_dir}...")
+        ctx = IrisContext(model_dir)
 
-            # Only pass dimensions on first iteration; subsequent ones let iris auto-detect
-            iter_w = width if i == 1 else None
-            iter_h = height if i == 1 else None
-
-            if iter_w:
-                dim_str = f" ({in_w}x{in_h} -> {iter_w}x{iter_h})"
+        for seed_idx in range(count):
+            # Determine seed for this count iteration
+            if seed_idx == 0 and base_seed is not None:
+                seed = base_seed
             else:
-                dim_str = f" ({in_w}x{in_h})"
+                seed = random.randint(0, 2**63 - 1)
 
-            if total > 1:
-                print(f"Iteration {i}/{total}: {evolving_input} -> {out_path}{dim_str}")
+            # For count > 1, each seed gets its own auto-numbered base
+            if seed_idx == 0:
+                seed_output = output_path
             else:
-                print(f"Upscaling: {evolving_input} -> {out_path}{dim_str}")
+                seed_output, _ = resolve_output_path(args.output, args.input)
 
-            result = run_iris(
-                iris_bin, model_dir, input_images, out_path, iter_w, iter_h, iris_passthrough
-            )
+            evolving_input = args.input
 
-            if result.returncode != 0:
-                if total > 1:
-                    print(
-                        f"Error: iris failed on iteration {i}/{total} (exit code {result.returncode})",
-                        file=sys.stderr,
-                    )
+            for evo_idx in range(1, evolve + 1):
+                out_path = make_output_path(seed_output, evo_idx, evolve)
+                input_images = [evolving_input] + args.ref_images
+
+                # Only pass dimensions on first evolution iteration; subsequent ones let iris auto-detect
+                iter_w = width if evo_idx == 1 else None
+                iter_h = height if evo_idx == 1 else None
+
+                params = build_params(args, iter_w, iter_h, seed)
+
+                if iter_w:
+                    dim_str = f" ({in_w}x{in_h} -> {iter_w}x{iter_h})"
                 else:
-                    print(
-                        f"Error: iris exited with code {result.returncode}",
-                        file=sys.stderr,
-                    )
-                sys.exit(result.returncode)
+                    dim_str = f" ({in_w}x{in_h})"
 
-            evolving_input = out_path
+                label_parts = []
+                if count > 1:
+                    label_parts.append(f"seed {seed_idx + 1}/{count}")
+                if evolve > 1:
+                    label_parts.append(f"evolve {evo_idx}/{evolve}")
 
-        if total > 1:
-            print(f"Done: {total} iterations complete, final output: {evolving_input}")
+                if label_parts:
+                    label = f"[{', '.join(label_parts)}]"
+                    print(f"{label}: {evolving_input} -> {out_path}{dim_str} (seed={seed})")
+                else:
+                    print(f"Upscaling: {evolving_input} -> {out_path}{dim_str} (seed={seed})")
+
+                ctx.multiref(args.prompt, input_images, out_path, params)
+                evolving_input = out_path
+
+        ctx.close()
+
+        if total_images > 1:
+            print(f"Done: {total_images} images generated")
         else:
             print(f"Done: {out_path}")
 

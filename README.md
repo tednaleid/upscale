@@ -120,9 +120,10 @@ Upscale options:
   --scale N             Scale percentage (e.g. 200 = 2x). Mutually exclusive with -W/-H.
   -i PATH               Additional reference image (repeatable, passed to every iteration)
   --evolve N            Number of evolution iterations (default: 1)
+  --count N             Generate N images with different seeds, model loaded once (default: 1)
   --max-area N          Pixel area warning threshold (default: 1048576 = 1024x1024)
 
-Common iris options (passed through to iris):
+Generation options:
   -p, --prompt TEXT     Text prompt (default: "Create an exact copy of the input image.")
   -s, --steps N         Sampling steps (default: auto, 4 distilled / 50 base)
   -g, --guidance N      CFG guidance scale (default: auto, 1.0 distilled / 4.0 base)
@@ -130,12 +131,6 @@ Common iris options (passed through to iris):
   --linear              Use linear timestep schedule (faster preview with fewer steps)
   --power               Use power curve timestep schedule
   --power-alpha N       Power schedule exponent (default: 2.0)
-  -v, --verbose         Show detailed output
-  -q, --quiet           Silent mode
-  --show                Display image in terminal (Kitty/Ghostty/iTerm2)
-  --show-steps          Display each denoising step (slower)
-
-All other unknown flags are also passed through to iris (e.g. -e, --no-mmap).
 ```
 
 ### Dimension Handling
@@ -160,6 +155,23 @@ Use `--evolve N` to iteratively refine an image by feeding each output back as t
 
 Each iteration feeds the previous output as the primary input to iris. Dimensions are only set on the first iteration; subsequent iterations let iris auto-detect from the previous output.
 
+### Multi-Seed Generation
+
+Use `--count N` to generate N images with different random seeds. The model is loaded once and reused for all images, saving ~35s per additional image:
+
+```bash
+# Generate 3 variations
+./upscale.py input.png --count 3
+
+# First image uses seed 42, remaining 2 get random seeds
+./upscale.py input.png --count 3 --seed 42
+
+# Combine with evolution: 2 seeds x 3 evolve = 6 images total
+./upscale.py input.png --count 2 --evolve 3
+```
+
+Each seed iteration gets its own auto-numbered output base (e.g. `input-00000.png`, `input-00001.png`, `input-00002.png`). When combined with `--evolve`, each seed's evolution iterations are numbered within its base.
+
 ### Persistent Reference Images
 
 Use `-i` to pass additional reference images that persist across all evolution iterations:
@@ -177,18 +189,6 @@ Iteration 3: iris -i input-00000_002.png    -i style.png -o input-00000_003.png 
 ```
 
 Multiple `-i` flags can be used to pass several reference images.
-
-### Passthrough Flags
-
-Any flags not recognized by the wrapper are passed directly to iris:
-
-```bash
-# Show result in terminal, verbose output, 8 sampling steps
-./upscale.py input.png --show -v -s 8
-
-# Reproducible with a seed
-./upscale.py input.png -S 42
-```
 
 ### Examples
 

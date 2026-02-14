@@ -5,7 +5,7 @@ iris_dir := justfile_directory() / "iris.c"
 bin_link := home_directory() / ".local" / "bin" / "upscale"
 
 # Clone iris.c, build, and download all models (9B requires HF_TOKEN, skipped without it)
-default: iris-build download-4b download-9b
+default: iris-dylib download-4b download-9b
 
 # Clone iris.c or pull/rebase latest main
 iris-pull:
@@ -44,6 +44,22 @@ iris-build: iris-pull
         fi
     fi
     echo "Build complete!"
+
+# Build shared library for Python ctypes usage
+iris-dylib: iris-build
+    #!/usr/bin/env bash
+    set -eu
+    cd "{{ iris_dir }}"
+    echo "Building libiris.dylib..."
+    gcc -shared -o libiris.dylib \
+        iris.mps.o iris_kernels.mps.o iris_tokenizer.mps.o iris_vae.mps.o \
+        iris_transformer_flux.mps.o iris_transformer_zimage.mps.o \
+        iris_sample.mps.o iris_image.mps.o jpeg.mps.o iris_safetensors.mps.o \
+        iris_qwen3.mps.o iris_qwen3_tokenizer.mps.o terminals.mps.o \
+        iris_metal.o \
+        -framework Accelerate -framework Metal -framework MetalPerformanceShaders \
+        -framework MetalPerformanceShadersGraph -framework Foundation -lm
+    echo "Built: {{ iris_dir }}/libiris.dylib"
 
 # Download both 4B models (distilled + base, ~32GB total)
 download-4b: download-4b-distilled download-4b-base
