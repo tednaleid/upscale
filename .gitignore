@@ -2,3 +2,4 @@ flux*
 iris*
 .claude
 *.png
+__pycache__

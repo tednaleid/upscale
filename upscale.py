@@ -326,6 +326,19 @@ Examples:
 
         show = args.show or args.show_steps
 
+        # Pre-encode text and image for multi-seed generation (--count > 1).
+        # Saves ~1.5-15s per additional seed by avoiding redundant Qwen3 and VAE work.
+        use_precomputed = count > 1 and not args.ref_images
+        text_emb = text_emb_uncond = first_img_cache = None
+
+        if use_precomputed:
+            text_emb, text_seq = ctx.encode_text(args.prompt)
+            if not ctx.is_distilled():
+                text_emb_uncond, text_seq_uncond = ctx.encode_text("")
+            else:
+                text_seq_uncond = 0
+            ctx.release_text_encoder()
+
         for seed_idx in range(count):
             # Determine seed for this count iteration
             if seed_idx == 0 and base_seed is not None:
@@ -343,7 +356,6 @@ Examples:
 
             for evo_idx in range(1, evolve + 1):
                 out_path = make_output_path(seed_output, evo_idx, evolve)
-                input_images = [evolving_input] + args.ref_images
 
                 # Only pass dimensions on first evolution iteration; subsequent ones let iris auto-detect
                 iter_w = width if evo_idx == 1 else None
@@ -369,7 +381,28 @@ Examples:
                     print(f"Upscaling: {evolving_input} -> {out_path}{dim_str} (seed={seed})")
 
                 gen_t0 = time.monotonic()
-                ctx.multiref(args.prompt, input_images, out_path, params)
+
+                if use_precomputed:
+                    # Cache image latent for first evolve step (shared across seeds)
+                    if evo_idx == 1:
+                        if first_img_cache is None:
+                            first_img_cache = ctx.encode_image(evolving_input)
+                        img_lat, lat_h, lat_w = first_img_cache
+                    else:
+                        img_lat, lat_h, lat_w = ctx.encode_image(evolving_input)
+
+                    ctx.img2img_precomputed(
+                        text_emb, text_seq, text_emb_uncond, text_seq_uncond,
+                        img_lat, lat_h, lat_w, out_path, params,
+                    )
+
+                    # Free per-evolve image latents (not the cached first one)
+                    if evo_idx > 1:
+                        ctx.free_encoded(img_lat)
+                else:
+                    input_images = [evolving_input] + args.ref_images
+                    ctx.multiref(args.prompt, input_images, out_path, params)
+
                 gen_elapsed = time.monotonic() - gen_t0
                 print(f"Saved {out_path} ({gen_elapsed:.1f}s)")
 
@@ -377,6 +410,14 @@ Examples:
                     ctx.display_png(out_path)
 
                 evolving_input = out_path
+
+        # Free pre-encoded data
+        if text_emb:
+            ctx.free_encoded(text_emb)
+        if text_emb_uncond:
+            ctx.free_encoded(text_emb_uncond)
+        if first_img_cache:
+            ctx.free_encoded(first_img_cache[0])
 
         ctx.close()
 

@@ -27,6 +27,11 @@ IRIS_H_FUNCTIONS = [
     "iris_multiref",
     "iris_get_error",
     "iris_set_step_image_callback",
+    "iris_encode_text",
+    "iris_release_text_encoder",
+    "iris_encode_image",
+    "iris_is_distilled",
+    "iris_img2img_precomputed",
 ]
 
 IRIS_H_BLOCKS = [
