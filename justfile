@@ -124,41 +124,26 @@ test:
 
     run() { echo ""; echo "=== $1 ==="; shift; "$@"; }
 
-    # Single-ref, auto-detect dimensions, auto-numbered output
-    run "basic upscale" ./upscale.py -i input.png -o "$d/basic"
+    # --scale dimension path, linear schedule, seed, guidance, explicit .png output
+    run "scale" ./upscale.py -i input.png --scale 110 --linear -S 42 -g 2.0 -o "$d/scale.png"
 
-    # Scale + explicit .png + seed + linear schedule
-    run "scale+linear+seed" ./upscale.py -i input.png --scale 110 --linear -S 42 -o "$d/scale.png"
+    # W-only dimension inference (H from aspect ratio), power schedule, prompt, steps
+    run "width-only" ./upscale.py -i input.png -W 144 --power --power-alpha 3.0 -p "sharp" -s 2 -o "$d/width"
 
-    # Width-only + power schedule + custom prompt
-    run "width+power+prompt" ./upscale.py -i input.png -W 288 --power --power-alpha 3.0 -p "sharp" -o "$d/width"
-
-    # Height-only + -o flag + custom steps
-    run "height+oflag+steps" ./upscale.py -i input.png -H 288 -s 2 -o "$d/height.png"
-
-    # Both W+H + custom guidance
-    run "both-dims+guidance" ./upscale.py -i input.png -W 288 -H 288 -g 2.0 -o "$d/both"
-
-    # Evolution (2 iterations, tests output chaining)
-    run "evolve" ./upscale.py -i input.png -s 2 --evolve 2 -o "$d/evolve"
-
-    # Count (2 seeds, triggers precomputed single-ref path)
-    run "count" ./upscale.py -i input.png -s 2 --count 2 -o "$d/count"
-
-    # Count + evolve combined (precomputed + evolve, first_img_cache reuse)
+    # Precomputed single-ref, count + evolve loops, first_img_cache reuse
     run "count+evolve" ./upscale.py -i input.png -s 2 --count 2 --evolve 2 -o "$d/countevolve"
 
-    # Multi-reference, non-precomputed (iris_multiref with 2 refs)
-    run "multiref" ./upscale.py -i input.png -i avatar.png -p "blend" -W 288 -H 288 -o "$d/multiref"
+    # Non-precomputed multi-ref (iris_multiref with 2 refs)
+    run "multiref" ./upscale.py -i input.png -i avatar.png -p "blend" -s 2 -W 144 -H 144 -o "$d/multiref"
 
-    # Multi-reference + count (precomputed multi-ref with persistent_ref_latents)
-    run "multiref+count" ./upscale.py -i input.png -i avatar.png -p "blend" -W 288 -H 288 -s 2 --count 2 -o "$d/multiref-count"
+    # Precomputed multi-ref with persistent_ref_latents
+    run "multiref+count" ./upscale.py -i input.png -i avatar.png -p "blend" -W 144 -H 144 -s 2 --count 2 -o "$d/multiref-count"
 
-    # Text-to-image (iris_generate, no input images)
-    run "txt2img" ./upscale.py -p "a small red circle" -W 256 -H 256 -o "$d/txt2img"
+    # Text-to-image (no input image, prompt required)
+    run "txt2img" ./upscale.py -p "a small red circle" -W 144 -H 144 -s 2 -o "$d/txt2img"
 
-    # Directory output with trailing /
-    run "dir-output" ./upscale.py -i input.png -o "$d/dir/"
+    # Trailing / directory output path + show steps
+    run "dir-output" ./upscale.py -i input.png -o "$d/dir/" -s 2 --show-steps --show
 
     echo ""
     echo "=== All tests passed ==="
