@@ -170,7 +170,7 @@ Examples:
     )
     parser.add_argument(
         "--9b", dest="nine_b", action="store_true",
-        help="Use 9B model (larger, non-commercial). Requires setup: ./setup.sh --9b",
+        help="Use 9B model (larger, non-commercial). Download with: HF_TOKEN=... just download-9b",
     )
     parser.add_argument(
         "-i",
@@ -318,13 +318,13 @@ Examples:
 
     if not iris_bin.exists():
         print(f"Error: iris binary not found at {iris_bin}", file=sys.stderr)
-        print("Run ./setup.sh first to build iris.c", file=sys.stderr)
+        print("Run 'just' first to build iris.c", file=sys.stderr)
         sys.exit(1)
 
     if not model_dir.exists():
         model_name = "base model" if args.base else "model"
         print(f"Error: {model_name.capitalize()} not found at {model_dir}", file=sys.stderr)
-        print("Run ./setup.sh first to download the models", file=sys.stderr)
+        print("Run 'just' first to download the models", file=sys.stderr)
         sys.exit(1)
 
     # --- Dimension calculation (iteration 1 only) ---

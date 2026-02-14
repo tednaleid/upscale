@@ -17,21 +17,33 @@ The key insight is using a prompt like "Create an exact copy of the input image"
 
 ## Setup
 
-Run the setup script once to clone iris.c, build it, and download the model:
+Requires [just](https://github.com/casey/just). Run once to clone iris.c, build it, and download models:
 
 ```bash
-# 4B models (default, ~32GB total)
-./setup.sh
+# Downloads all models — 9B included if HF_TOKEN is set, skipped otherwise
+just
 
-# 9B models (larger, non-commercial, requires HuggingFace token, ~60GB total)
+# To include 9B models, set HF_TOKEN first
 export HF_TOKEN=hf_...
-./setup.sh --9b
+just
+
+# Individual model downloads
+just download-4b              # both 4B models (~32GB)
+just download-4b-distilled    # 4B distilled only (~16GB)
+just download-4b-base         # 4B base only (~16GB)
+just download-9b              # both 9B models (~60GB, needs HF_TOKEN)
+just download-9b-distilled    # 9B distilled only (~30GB, needs HF_TOKEN)
+just download-9b-base         # 9B base only (~30GB, needs HF_TOKEN)
+
+# Add upscale to your PATH
+just install              # symlinks to ~/.local/bin/upscale
+just uninstall            # removes the symlink
 ```
 
 This will:
 1. Clone [antirez/iris.c](https://github.com/antirez/iris.c)
 2. Build with the optimal backend for your platform (MPS for Apple Silicon, BLAS for others)
-3. Download the distilled model and base model
+3. Download the selected models
 
 The 9B models require a [HuggingFace token](https://huggingface.co/settings/tokens) and accepting the [FLUX.2-klein-9B license](https://huggingface.co/black-forest-labs/FLUX.2-klein-9B).
 
@@ -102,7 +114,7 @@ Positional:
 
 Upscale options:
   --base                Use base model (higher quality, ~25x slower)
-  --9b                  Use 9B model (larger, non-commercial). Requires setup: ./setup.sh --9b
+  --9b                  Use 9B model (larger, non-commercial). Download with: HF_TOKEN=... just download-9b
   -W, --width N         Output width (default: iris auto-detect from input)
   -H, --height N        Output height (default: iris auto-detect from input)
   --scale N             Scale percentage (e.g. 200 = 2x). Mutually exclusive with -W/-H.
