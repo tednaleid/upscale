@@ -529,3 +529,24 @@ class IrisContext:
     def available(cls):
         """Return True if the dylib exists."""
         return _DYLIB_PATH.exists()
+
+
+def display_png_standalone(path):
+    """Display a PNG in the terminal without loading a model.
+
+    Returns True on success, False if the terminal doesn't support graphics.
+    """
+    lib = ctypes.CDLL(str(_DYLIB_PATH))
+    lib.detect_terminal_graphics.argtypes = []
+    lib.detect_terminal_graphics.restype = ctypes.c_int
+    lib.terminal_display_png.argtypes = [ctypes.c_char_p, ctypes.c_int]
+    lib.terminal_display_png.restype = ctypes.c_int
+
+    proto = lib.detect_terminal_graphics()
+    if proto == TERM_PROTO_NONE:
+        print("Warning: requires a supported terminal "
+              "(Kitty, Ghostty, iTerm2, WezTerm, or Konsole)",
+              file=sys.stderr)
+        return False
+    lib.terminal_display_png(str(path).encode(), proto)
+    return True

@@ -20,7 +20,10 @@ from types import SimpleNamespace
 import click
 from PIL import Image
 
-from iris_ffi import IrisContext, IrisParams, IRIS_SCHEDULE_LINEAR, IRIS_SCHEDULE_POWER
+from iris_ffi import (
+    IrisContext, IrisParams, IRIS_SCHEDULE_LINEAR, IRIS_SCHEDULE_POWER,
+    display_png_standalone,
+)
 
 DEFAULT_PROMPT = "Create an exact copy of the input image."
 
@@ -252,7 +255,8 @@ Examples:
   upscale -i input.png --base
   upscale -i input.png --count 3 --evolve 2
   upscale -p "a cat" -W 512 -H 512
-  upscale info output.png"""
+  upscale info output.png
+  upscale show output.png"""
 
 
 @click.group(invoke_without_command=True, epilog=EXAMPLES)
@@ -550,6 +554,16 @@ def info(path):
 
     for key in upscale_keys + iris_keys + other_keys:
         print(f"{key}: {text[key]}")
+
+
+@cli.command()
+@click.argument("path", type=click.Path(exists=True, path_type=Path))
+def show(path):
+    """Display an image in the terminal (Kitty/Ghostty/iTerm2/WezTerm)."""
+    if not IrisContext.available():
+        raise click.ClickException(
+            "libiris.dylib not found. Run 'just' first to build iris.c and the shared library")
+    display_png_standalone(path)
 
 
 if __name__ == "__main__":
