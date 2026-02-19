@@ -145,6 +145,21 @@ test:
     # Trailing / directory output path + show steps
     run "dir-output" ./upscale.py -i input.png -o "$d/dir/" -s 2 --show-steps --show
 
+    # Verify metadata was embedded in generated images
+    echo ""
+    echo "=== info ==="
+    ./upscale.py info "$d/scale.png"
+    # Check that key metadata fields are present
+    ./upscale.py info "$d/scale.png" | grep -q "upscale:command" || { echo "FAIL: missing upscale:command"; exit 1; }
+    ./upscale.py info "$d/scale.png" | grep -q "upscale:input_sha256" || { echo "FAIL: missing upscale:input_sha256"; exit 1; }
+    ./upscale.py info "$d/scale.png" | grep -q "upscale:version" || { echo "FAIL: missing upscale:version"; exit 1; }
+    ./upscale.py info "$d/scale.png" | grep -q "iris:seed" || { echo "FAIL: missing iris:seed"; exit 1; }
+    # txt2img should have no input_sha256
+    if ./upscale.py info "$d/txt2img-00000.png" | grep -q "upscale:input_sha256"; then
+        echo "FAIL: txt2img should not have upscale:input_sha256"; exit 1
+    fi
+    echo "Metadata checks passed"
+
     echo ""
     echo "=== All tests passed ==="
     echo "Output: $d"

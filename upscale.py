@@ -7,9 +7,14 @@
 # ABOUTME: Adds dimension inference, percentage scaling, iterative evolution, and persistent reference images
 
 import argparse
+import hashlib
 import random
+import shlex
+import struct
+import subprocess
 import sys
 import time
+import zlib
 from pathlib import Path
 
 from PIL import Image
@@ -22,6 +27,131 @@ DEFAULT_PROMPT = "Create an exact copy of the input image."
 def align16(n):
     """Round down to nearest multiple of 16."""
     return (n // 16) * 16
+
+
+def get_version():
+    """Get git short SHA of the upscale repo, or 'unknown' if not in a git repo."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=Path(__file__).resolve().parent,
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return "unknown"
+
+
+def sha256_file(path):
+    """Return hex SHA256 digest of a file."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def build_command_string(args, input_paths, seed, width, height):
+    """Build the upscale command string that reproduces this exact generation.
+
+    Includes generation parameters only (inputs, dimensions, prompt, steps,
+    guidance, seed, model, schedule). Excludes batch/display options.
+    """
+    parts = ["upscale"]
+
+    for p in input_paths:
+        parts.append(f"-i {shlex.quote(str(p))}")
+
+    if width is not None:
+        parts.append(f"-W {width}")
+    if height is not None:
+        parts.append(f"-H {height}")
+
+    if args.prompt != DEFAULT_PROMPT:
+        parts.append(f"-p {shlex.quote(args.prompt)}")
+
+    if args.steps is not None:
+        parts.append(f"-s {args.steps}")
+    if args.guidance is not None:
+        parts.append(f"-g {args.guidance}")
+
+    parts.append(f"-S {seed}")
+
+    if args.base:
+        parts.append("--base")
+    if args.nine_b:
+        parts.append("--9b")
+
+    if args.linear:
+        parts.append("--linear")
+    elif args.power:
+        parts.append("--power")
+    if args.power_alpha is not None:
+        parts.append(f"--power-alpha {args.power_alpha}")
+
+    return " ".join(parts)
+
+
+def make_png_text_chunk(keyword, text):
+    """Build a PNG tEXt chunk as raw bytes.
+
+    Format per PNG spec: [4-byte length][tEXt][keyword\\0text][4-byte CRC32].
+    Mirrors write_png_text_chunk() in iris_image.c.
+    """
+    payload = keyword.encode() + b"\x00" + text.encode()
+    chunk_type = b"tEXt"
+    crc = zlib.crc32(chunk_type + payload) & 0xFFFFFFFF
+    return struct.pack(">I", len(payload)) + chunk_type + payload + struct.pack(">I", crc)
+
+
+def inject_png_metadata(png_path, metadata):
+    """Inject tEXt metadata chunks into an existing PNG file.
+
+    Reads the file, finds the insertion point before the first IDAT chunk,
+    splices in new tEXt chunks, and writes back. No pixel decode/encode.
+    """
+    raw = Path(png_path).read_bytes()
+    new_chunks = b"".join(make_png_text_chunk(k, v) for k, v in metadata.items())
+
+    # Scan chunks to find first IDAT (insertion point)
+    pos = 8  # skip PNG signature
+    while pos < len(raw):
+        chunk_len = struct.unpack(">I", raw[pos:pos + 4])[0]
+        chunk_type = raw[pos + 4:pos + 8]
+        if chunk_type == b"IDAT":
+            break
+        pos += 12 + chunk_len  # 4 len + 4 type + data + 4 crc
+
+    Path(png_path).write_bytes(raw[:pos] + new_chunks + raw[pos:])
+
+
+def info_main(path):
+    """Display all PNG tEXt metadata from an image file."""
+    p = Path(path)
+    if not p.exists():
+        print(f"Error: File not found: {p}", file=sys.stderr)
+        sys.exit(1)
+    if p.suffix.lower() != ".png":
+        print(f"Error: Not a PNG file: {p}", file=sys.stderr)
+        sys.exit(1)
+
+    img = Image.open(p)
+    text = getattr(img, "text", {})
+    img.close()
+
+    if not text:
+        print(f"No text metadata found in {p}")
+        return
+
+    # Print upscale-specific chunks first, then iris, then others
+    upscale_keys = [k for k in text if k.startswith("upscale:")]
+    iris_keys = [k for k in text if k.startswith("iris:") or k == "Software"]
+    other_keys = [k for k in text if k not in upscale_keys and k not in iris_keys]
+
+    for key in upscale_keys + iris_keys + other_keys:
+        print(f"{key}: {text[key]}")
 
 
 def get_dimensions(args, input_path, max_area):
@@ -142,9 +272,12 @@ def build_params(args, width, height, seed):
 
 def main():
     script_dir = Path(__file__).resolve().parent
+    version = get_version()
 
     parser = argparse.ArgumentParser(
-        description="Upscale or generate images using Flux.2 Klein super-resolution.",
+        description="Upscale or generate images using Flux.2 Klein super-resolution.\n\n"
+                     "Subcommands:\n"
+                     "  upscale info <path.png>   Display embedded metadata from a generated image",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -174,6 +307,9 @@ Examples:
 
   # Multi-reference generation
   %(prog)s -i car.png -i beach.png -p "sports car on beach" -W 512 -H 512
+
+  # View embedded metadata from a generated image
+  %(prog)s info output.png
 """,
     )
 
@@ -458,6 +594,22 @@ Examples:
                 gen_elapsed = time.monotonic() - gen_t0
                 print(f"Saved {out_path} ({gen_elapsed:.1f}s)")
 
+                # Inject reproducibility metadata into the saved PNG
+                gen_inputs = []
+                if evolving_input:
+                    gen_inputs.append(evolving_input)
+                gen_inputs.extend(persistent_refs)
+
+                meta = {"upscale:command": build_command_string(
+                    args, gen_inputs, seed, iter_w, iter_h,
+                )}
+                if gen_inputs:
+                    meta["upscale:input_sha256"] = ",".join(
+                        sha256_file(p) for p in gen_inputs
+                    )
+                meta["upscale:version"] = version
+                inject_png_metadata(out_path, meta)
+
                 if show:
                     ctx.display_png(out_path)
 
@@ -487,4 +639,12 @@ Examples:
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) >= 2 and sys.argv[1] == "info":
+        if len(sys.argv) < 3 or sys.argv[2] in ("-h", "--help"):
+            print("Usage: upscale info <path.png>")
+            print()
+            print("Display PNG text metadata (upscale parameters, iris seed, etc.)")
+            sys.exit(0)
+        info_main(sys.argv[2])
+    else:
+        main()
