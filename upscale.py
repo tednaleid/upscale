@@ -557,13 +557,14 @@ def info(path):
 
 
 @cli.command()
-@click.argument("path", type=click.Path(exists=True, path_type=Path))
-def show(path):
-    """Display an image in the terminal (Kitty/Ghostty/iTerm2/WezTerm)."""
+@click.argument("paths", nargs=-1, required=True, type=click.Path(exists=True, path_type=Path))
+def show(paths):
+    """Display one or more images in the terminal (Kitty/Ghostty/iTerm2/WezTerm)."""
     if not IrisContext.available():
         raise click.ClickException(
             "libiris.dylib not found. Run 'just' first to build iris.c and the shared library")
-    display_png_standalone(path)
+    for path in paths:
+        display_png_standalone(path)
 
 
 if __name__ == "__main__":
