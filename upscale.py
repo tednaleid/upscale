@@ -557,13 +557,28 @@ def info(path):
 
 
 @cli.command()
-@click.argument("paths", nargs=-1, required=True, type=click.Path(exists=True, path_type=Path))
+@click.argument("paths", nargs=-1, type=click.Path(exists=True, path_type=Path))
 def show(paths):
-    """Display one or more images in the terminal (Kitty/Ghostty/iTerm2/WezTerm)."""
+    """Display one or more images in the terminal (Kitty/Ghostty/iTerm2/WezTerm).
+
+    Accepts filenames as arguments and/or on stdin (one per line), so it works
+    in pipelines like: find . -name '*.png' | upscale show
+    """
     if not IrisContext.available():
         raise click.ClickException(
             "libiris.dylib not found. Run 'just' first to build iris.c and the shared library")
-    for path in paths:
+    all_paths = list(paths)
+    if not sys.stdin.isatty():
+        for line in sys.stdin:
+            line = line.strip()
+            if line:
+                p = Path(line)
+                if not p.exists():
+                    raise click.ClickException(f"File not found: {line}")
+                all_paths.append(p)
+    if not all_paths:
+        raise click.UsageError("No image paths provided (pass as arguments or pipe via stdin).")
+    for path in all_paths:
         display_png_standalone(path)
 
 
