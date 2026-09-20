@@ -4,3 +4,4 @@ iris.c/
 *.png
 __pycache__
 .llm
+output/
