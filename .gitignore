@@ -3,3 +3,4 @@ iris.c/
 .claude
 *.png
 __pycache__
+.llm
