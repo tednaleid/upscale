@@ -21,6 +21,11 @@ from PIL import Image
 REPO_DIR = Path(__file__).resolve().parent.parent
 PID_DIR = REPO_DIR / ".llm" / "PiD"
 PID_PYTHON = PID_DIR / ".venv-mps" / "bin" / "python"
+PID_FACTOR = 4
+
+
+def align16(n):
+    return max(16, int(n) // 16 * 16)
 
 
 def output_paths(output, input_stem, count):
@@ -44,37 +49,36 @@ def output_paths(output, input_stem, count):
               help="Output: a .png path (single image), or a base name that gets -NNNNN.png appended "
                    "(default base: <input stem>-pid in the current directory)")
 @click.option("-p", "--prompt", required=True, help="Caption describing the image; PiD conditions on it")
-@click.option("--scale", type=int, default=400,
-              help="Scale percentage, a multiple of 100 (default 400; the checkpoints are trained for 4x)")
+@click.option("--scale", type=float, default=None,
+              help="Output size as a percentage of the input (e.g. 200 = 2x). Default 400. "
+                   "Mutually exclusive with --output-size.")
 @click.option("--output-size", type=int, default=None,
-              help="Long side of the output in pixels; the input is resized to output-size / scale first")
-@click.option("--input-size", type=int, default=None,
-              help="Resize the input so its long side is N pixels before upscaling (the 2k checkpoint expects about 512)")
+              help="Long side of the output in pixels, aspect ratio preserved")
 @click.option("--count", type=int, default=1, help="Generate N images with consecutive seeds (one model load)")
 @click.option("--ckpt", type=click.Choice(["2k", "2kto4k_v1pt5"]), default="2k",
               help="PiD checkpoint: 2k for outputs near 2048, 2kto4k_v1pt5 for outputs up to 4096")
 @click.option("-s", "--steps", type=int, default=4, help="PiD sampling steps (the checkpoints are 4-step distilled)")
 @click.option("-S", "--seed", type=int, default=5, help="Seed of the first image")
-def main(input_path, output, prompt, scale, output_size, input_size, count, ckpt, steps, seed):
-    if scale % 100 != 0 or scale < 100:
-        raise click.UsageError("--scale must be a multiple of 100 (PiD takes an integer factor)")
-    if output_size and input_size:
-        raise click.UsageError("--output-size and --input-size are mutually exclusive")
+def main(input_path, output, prompt, scale, output_size, count, ckpt, steps, seed):
+    if scale and output_size:
+        raise click.UsageError("--scale and --output-size are mutually exclusive")
     if not PID_PYTHON.exists():
         raise click.ClickException(f"PiD environment not found at {PID_PYTHON}")
-    factor = scale // 100
-    if output_size:
-        input_size = output_size // factor
     outputs = output_paths(output, input_path.stem, count)
 
     img = Image.open(input_path).convert("RGB")
-    if input_size:
-        ratio = input_size / max(img.size)
-        img = img.resize((round(img.width * ratio), round(img.height * ratio)), Image.LANCZOS)
-    # PiD center-crops each side down to a multiple of 16
-    in_w, in_h = (img.width // 16) * 16, (img.height // 16) * 16
-    print(f"PiD {ckpt}: {input_path.name} {in_w}x{in_h} -> {in_w * factor}x{in_h * factor} "
-          f"({(in_w * factor // 16) * (in_h * factor // 16)} tokens) x{count}", file=sys.stderr)
+    ratio = output_size / max(img.size) if output_size else (scale or 400) / 100
+    # PiD always decodes at its trained factor, so the input is resized to the target size divided by that factor
+    in_w = align16(img.width * ratio / PID_FACTOR)
+    in_h = align16(img.height * ratio / PID_FACTOR)
+    print(f"PiD {ckpt}: {input_path.name} {img.width}x{img.height} -> resized to {in_w}x{in_h} -> "
+          f"{in_w * PID_FACTOR}x{in_h * PID_FACTOR} "
+          f"({(in_w * PID_FACTOR // 16) * (in_h * PID_FACTOR // 16)} tokens) x{count}", file=sys.stderr)
+    if not 384 <= max(in_w, in_h) <= 640:
+        print(f"Warning: PiD input long side is {max(in_w, in_h)}px; the 2k checkpoint works best near 512px "
+              f"(color casts near 256px, artifacts near 128px)", file=sys.stderr)
+    if (in_w, in_h) != img.size:
+        img = img.resize((in_w, in_h), Image.LANCZOS)
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
@@ -91,7 +95,7 @@ def main(input_path, output, prompt, scale, output_size, input_size, count, ckpt
              "--backbone", "flux2", "--pid_ckpt_type", ckpt,
              "--manifest", str(manifest), "--prompt", prompt,
              "--degrade_sigmas", "0.0", "--cfg_scale", "1",
-             "--pid_inference_steps", str(steps), "--scale", str(factor), "--seed", str(seed),
+             "--pid_inference_steps", str(steps), "--scale", str(PID_FACTOR), "--seed", str(seed),
              "--save_format", "png", "--output_dir", str(tmp / "out")],
             cwd=PID_DIR, env=env, capture_output=True, text=True,
         )
